@@ -151,6 +151,44 @@ create table if not exists public.bg_bot_events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.bg_backtests (
+  id uuid primary key default gen_random_uuid(),
+  bot_id uuid not null references public.bg_bots(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  status text not null check (status in ('running','completed','failed','signal_only')),
+  start_at timestamptz not null,
+  end_at timestamptz not null,
+  duration_seconds bigint not null check (duration_seconds >= 0),
+  initial_capital numeric(18,2) not null,
+  ending_capital numeric(18,2),
+  net_pnl numeric(18,4),
+  return_pct numeric(12,6),
+  max_drawdown_pct numeric(12,6),
+  trade_count integer not null default 0,
+  win_count integer not null default 0,
+  loss_count integer not null default 0,
+  signal_count integer not null default 0,
+  data_feed text not null default 'iex',
+  methodology text,
+  error_message text,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
+create table if not exists public.bg_backtest_trades (
+  id uuid primary key default gen_random_uuid(),
+  backtest_id uuid not null references public.bg_backtests(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entry_at timestamptz not null,
+  exit_at timestamptz,
+  entry_price numeric(24,8) not null,
+  exit_price numeric(24,8),
+  quantity numeric(24,8) not null,
+  pnl numeric(18,4),
+  exit_reason text,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists bg_bots_user_status_idx on public.bg_bots(user_id, status);
 create index if not exists bg_runs_bot_started_idx on public.bg_bot_runs(bot_id, started_at desc);
 create index if not exists bg_events_user_created_idx on public.bg_bot_events(user_id, created_at desc);
@@ -166,6 +204,8 @@ alter table public.bg_trades enable row level security;
 alter table public.bg_orders enable row level security;
 alter table public.bg_fills enable row level security;
 alter table public.bg_bot_events enable row level security;
+alter table public.bg_backtests enable row level security;
+alter table public.bg_backtest_trades enable row level security;
 
 create policy "profiles own rows" on public.bg_profiles for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "connections own rows read" on public.bg_broker_connections for select using (auth.uid() = user_id);
@@ -177,6 +217,8 @@ create policy "trades own rows read" on public.bg_trades for select using (auth.
 create policy "orders own rows read" on public.bg_orders for select using (auth.uid() = user_id);
 create policy "fills own rows read" on public.bg_fills for select using (auth.uid() = user_id);
 create policy "events own rows read" on public.bg_bot_events for select using (auth.uid() = user_id);
+create policy "backtests own rows read" on public.bg_backtests for select using (auth.uid() = user_id);
+create policy "backtest trades own rows read" on public.bg_backtest_trades for select using (auth.uid() = user_id);
 
 create or replace function public.bg_handle_new_user() returns trigger language plpgsql security definer set search_path = '' as $$
 begin

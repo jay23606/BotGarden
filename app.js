@@ -8,6 +8,7 @@ const modal = $("#modal");
 let session = null;
 let authMode = "signin";
 let bots = [];
+let backtestSummary = new Map();
 
 if (!configured) $("#setup-banner").classList.remove("hidden");
 
@@ -57,6 +58,8 @@ document.addEventListener("click", (event) => {
   if (nav) switchView(nav.dataset.view);
   if (event.target.closest("[data-new-bot]")) showBotForm();
   if (event.target.closest("[data-connect]")) showConnectionForm();
+  const details = event.target.closest("[data-bot-details]"); if (details) showBotDetails(details.dataset.botDetails);
+  const backtest = event.target.closest("[data-backtest]"); if (backtest) showBacktestForm(backtest.dataset.backtest);
   if (event.target.closest("[data-close-modal]")) modal.close();
 });
 
@@ -66,11 +69,14 @@ async function getConnection() {
 }
 
 async function loadDashboard() {
-  const [{ data: botData }, connection] = await Promise.all([
-    supabase.from("bg_bots").select("id,name,status,asset_class,symbol,direction,max_allocation,created_at").order("created_at", { ascending: false }),
+  const [{ data: botData }, connection, { data: backtests }] = await Promise.all([
+    supabase.from("bg_bots").select("id,name,bot_type,status,asset_class,symbol,direction,max_allocation,max_active_trades,start_condition,take_profit_pct,stop_loss_pct,cooldown_seconds,session_policy,created_at").order("created_at", { ascending: false }),
     getConnection(),
+    supabase.from("bg_backtests").select("bot_id,status,duration_seconds,net_pnl,return_pct,signal_count,created_at").in("status", ["completed", "signal_only"]),
   ]);
-  bots = botData || [];
+  backtestSummary = new Map();
+  (backtests || []).forEach((test) => { const current = backtestSummary.get(test.bot_id) || { seconds: 0, runs: 0, pnl: 0 }; current.seconds += Number(test.duration_seconds); current.runs++; current.pnl += Number(test.net_pnl || 0); backtestSummary.set(test.bot_id, current); });
+  bots = (botData || []).sort((a, b) => (backtestSummary.get(b.id)?.seconds || 0) - (backtestSummary.get(a.id)?.seconds || 0) || new Date(b.created_at) - new Date(a.created_at));
   const active = bots.filter((b) => b.status === "active").length;
   content.innerHTML = `
     <div class="cards">
@@ -86,7 +92,41 @@ async function loadDashboard() {
 
 function renderBots() {
   if (!bots.length) return `<div class="empty"><h3>No bots yet</h3><div>Create a DCA bot and preview its complete averaging schedule.</div><button class="primary" data-new-bot>Create your first bot</button></div>`;
-  return `<div class="bot-list">${bots.map((bot) => `<div class="bot-row"><div><div class="bot-name">${escapeHtml(bot.name)}</div><div class="subtle">${escapeHtml(bot.symbol)} · ${escapeHtml(bot.asset_class)}</div></div><div><span class="status">${escapeHtml(bot.status)}</span></div><div><div class="subtle">DIRECTION</div>${escapeHtml(bot.direction)}</div><div><div class="subtle">MAX ALLOCATION</div>${money(bot.max_allocation)}</div><button class="secondary">View</button></div>`).join("")}</div>`;
+  return `<div class="bot-list">${bots.map((bot) => { const summary = backtestSummary.get(bot.id) || { seconds: 0, runs: 0 }; return `<div class="bot-row"><div><div class="bot-name">${escapeHtml(bot.name)}</div><div class="subtle">${escapeHtml(bot.symbol)} · ${escapeHtml(bot.bot_type.replaceAll("_", " "))}</div></div><div><span class="status">${escapeHtml(bot.status)}</span></div><div><div class="subtle">BACKTESTED</div>${formatDuration(summary.seconds)}<div class="subtle">${summary.runs} run${summary.runs === 1 ? "" : "s"}</div></div><div><div class="subtle">MAX ALLOCATION</div>${money(bot.max_allocation)}</div><div class="row-actions"><button class="secondary" data-bot-details="${bot.id}">Details</button><button class="primary" data-backtest="${bot.id}">Backtest</button></div></div>`; }).join("")}</div>`;
+}
+
+function formatDuration(seconds) {
+  const days = Math.floor(Number(seconds || 0) / 86400); const hours = Math.floor((Number(seconds || 0) % 86400) / 3600);
+  return days ? `${days}d ${hours}h` : hours ? `${hours}h` : "Not yet";
+}
+
+async function showBotDetails(botId) {
+  const bot = bots.find((item) => item.id === botId); if (!bot) return;
+  const rule = bot.start_condition || {}; const conditions = rule.conditions || [];
+  const [{ data: steps }, { data: spread }] = await Promise.all([
+    supabase.from("bg_averaging_steps").select("step_number,deviation_pct,order_amount").eq("bot_id", bot.id).order("step_number"),
+    supabase.from("bg_option_spreads").select("*").eq("bot_id", bot.id).maybeSingle(),
+  ]);
+  const generatedValues = spread ? `<h3 class="detail-title">Generated spread settings</h3><div class="detail-grid"><div><span>Structure</span><strong>${escapeHtml(spread.spread_type.replaceAll("_", " "))}</strong></div><div><span>Expiration</span><strong>${spread.min_dte}–${spread.max_dte} DTE</strong></div><div><span>Short delta</span><strong>${Number(spread.short_delta_target).toFixed(2)}</strong></div><div><span>Width</span><strong>${money(spread.target_width)}</strong></div><div><span>Minimum credit</span><strong>${money(spread.minimum_credit)}</strong></div><div><span>Contracts</span><strong>${spread.contracts}</strong></div><div><span>Profit close</span><strong>${pct(spread.profit_close_pct)}</strong></div><div><span>Exit</span><strong>${spread.exit_dte} DTE</strong></div></div>` : steps?.length ? `<h3 class="detail-title">Generated order schedule</h3><table class="schedule"><thead><tr><th>Order</th><th>Deviation</th><th>Amount</th></tr></thead><tbody>${steps.map((step) => `<tr><td>${step.step_number ? `Averaging ${step.step_number}` : "Initial"}</td><td>-${pct(step.deviation_pct)}</td><td>${money(step.order_amount)}</td></tr>`).join("")}</tbody></table>` : "";
+  const generated = rule.generated_strategy ? `<div class="callout"><strong>Generated configuration</strong><br>Curated template: ${escapeHtml(rule.generated_strategy.replaceAll("_", " "))}. The generator selected the strategy; the values below came from that template and the risk choices in the popup.</div>` : "";
+  $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>${escapeHtml(bot.name)}</h3><p>${escapeHtml(bot.symbol)} · ${escapeHtml(bot.bot_type.replaceAll("_", " "))}</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body">${generated}<div class="detail-grid"><div><span>Maximum allocation</span><strong>${money(bot.max_allocation)}</strong></div><div><span>Take profit</span><strong>${bot.take_profit_pct ? pct(bot.take_profit_pct) : "Spread rule"}</strong></div><div><span>Stop loss</span><strong>${bot.stop_loss_pct ? pct(bot.stop_loss_pct) : "Defined by spread"}</strong></div><div><span>Session</span><strong>${escapeHtml(bot.session_policy)}</strong></div></div><h3 class="detail-title">Start rules (${escapeHtml(rule.operator || "AND")})</h3><div class="rule-list">${conditions.map((condition) => `<div><strong>${escapeHtml(conditionDefinition(condition.type)[1])}</strong><span>${escapeHtml(condition.timeframe || "")} · ${escapeHtml(Object.entries(condition.parameters || {}).map(([key, value]) => `${key}: ${value}`).join(", "))}</span></div>`).join("") || "No structured rules saved."}</div>${generatedValues}<div class="section-head"><h3>Backtest coverage</h3></div><div class="card">${formatDuration(backtestSummary.get(bot.id)?.seconds || 0)} across ${backtestSummary.get(bot.id)?.runs || 0} completed runs</div></div><div class="modal-foot"><button class="secondary" data-close-modal>Close</button><button class="primary" data-backtest="${bot.id}">Backtest</button></div>`;
+  modal.showModal();
+}
+
+function showBacktestForm(botId) {
+  const bot = bots.find((item) => item.id === botId); if (!bot) return;
+  const end = new Date(); end.setDate(end.getDate() - 1); const start = new Date(end); start.setDate(start.getDate() - 7);
+  const dateValue = (date) => date.toISOString().slice(0, 10);
+  $("#modal-content").innerHTML = `<form id="backtest-form"><div class="modal-head"><div><h3>Backtest ${escapeHtml(bot.name)}</h3><p>${bot.bot_type === "credit_spread" ? "Tests the underlying entry signals only; option P&L is not estimated." : "Simulates entries, averaging orders, take profit, and stop loss on historical IEX bars."}</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">Results exclude fees and slippage. Alpaca Basic uses IEX rather than the consolidated market feed. Maximum range per run is 31 days.</div><div class="form-grid"><label>Start date<input name="start" type="date" value="${dateValue(start)}" required></label><label>End date<input name="end" type="date" value="${dateValue(end)}" required></label></div><div id="backtest-result"></div><p class="form-message" id="backtest-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button class="primary" type="submit">Run backtest</button></div></form>`;
+  if (modal.open) modal.close(); modal.showModal();
+  $("#backtest-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); const button = event.submitter; button.disabled = true; button.textContent = "Running…"; $("#backtest-message").textContent = "";
+    try {
+      const data = new FormData(event.currentTarget); const result = await invoke("backtest-bot", { botId, start: `${data.get("start")}T14:30:00Z`, end: `${data.get("end")}T21:00:00Z` });
+      $("#backtest-result").innerHTML = `<div class="backtest-result"><div><span>Coverage</span><strong>${formatDuration(result.duration_seconds)}</strong></div><div><span>Signals</span><strong>${result.signal_count}</strong></div><div><span>${result.status === "signal_only" ? "Option P&L" : "Net P&L"}</span><strong>${result.status === "signal_only" ? "Not modeled" : money(result.net_pnl)}</strong></div><div><span>Return</span><strong>${result.return_pct == null ? "—" : pct(result.return_pct)}</strong></div><div><span>Trades</span><strong>${result.trade_count}</strong></div><div><span>Max drawdown</span><strong>${result.max_drawdown_pct == null ? "—" : pct(result.max_drawdown_pct)}</strong></div></div>`;
+      button.textContent = "Run again"; button.disabled = false; await loadDashboard();
+    } catch (error) { $("#backtest-message").textContent = error.message || "Backtest failed"; button.textContent = "Run backtest"; button.disabled = false; }
+  });
 }
 
 function switchView(view) {
