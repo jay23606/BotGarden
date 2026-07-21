@@ -1,0 +1,23 @@
+.equity-panel { padding: 20px; }
+.equity-chart { width: 100%; height: 180px; display: block; overflow: visible; }
+.equity-chart .grid { stroke: var(--line); stroke-width: 1; }
+.equity-chart .area { fill: rgba(31, 107, 79, .1); }
+.equity-chart .line { fill: none; stroke: var(--green); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.equity-chart-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 8px; }
+.risk-health { display: grid; gap: 10px; }
+.risk-health-row { display: grid; grid-template-columns: 1.3fr 1fr 2fr; gap: 18px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.risk-health-row:last-child { border-bottom: 0; }
+.risk-health-row span, .fill-row span { color: var(--muted); font-size: 12px; }
+.risk-badge { width: max-content; border-radius: 99px; padding: 5px 9px; background: #e9f3ed; color: var(--green); font-size: 11px; font-weight: 700; }
+.risk-badge.warning { background: #fff1d6; color: #835b0a; }
+.risk-badge.danger { background: #fbe7e7; color: var(--danger); }
+.fill-list { display: grid; gap: 8px; }
+.fill-row { display: grid; grid-template-columns: 1.2fr .75fr .8fr .9fr 1.4fr; gap: 14px; align-items: center; padding: 13px 15px; background: white; border: 1px solid var(--line); border-radius: 10px; }
+.fill-row > div { display: grid; gap: 3px; }
+.fill-side { text-transform: uppercase; font-size: 11px; font-weight: 700; }
+@media (max-width: 700px) {
+  .risk-health-row { grid-template-columns: 1fr 1fr; }
+  .risk-health-row > :last-child { grid-column: 1 / -1; }
+  .fill-row { grid-template-columns: 1fr 1fr; }
+  .fill-row > :last-child { grid-column: 1 / -1; }
+}

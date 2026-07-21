@@ -35,15 +35,22 @@ Deno.serve(async (req) => {
       decrypt(credentials.api_secret_ciphertext, credentials.api_secret_iv, key),
     ]);
     const headers = { "APCA-API-KEY-ID": apiKey, "APCA-API-SECRET-KEY": secret };
-    const [positionsResponse, accountResponse] = await Promise.all([
+    const after = new Date(Date.now() - 30 * 86400000).toISOString();
+    const [positionsResponse, accountResponse, historyResponse, activitiesResponse, ordersResponse] = await Promise.all([
       fetch("https://paper-api.alpaca.markets/v2/positions", { headers }),
       fetch("https://paper-api.alpaca.markets/v2/account", { headers }),
+      fetch("https://paper-api.alpaca.markets/v2/account/portfolio/history?period=1M&timeframe=1D&intraday_reporting=market_hours&pnl_reset=per_day", { headers }),
+      fetch("https://paper-api.alpaca.markets/v2/account/activities/FILL?direction=desc&page_size=100", { headers }),
+      fetch(`https://paper-api.alpaca.markets/v2/orders?status=all&direction=desc&limit=500&after=${encodeURIComponent(after)}`, { headers }),
     ]);
     if (!positionsResponse.ok) throw new Error(`Alpaca positions error (${positionsResponse.status})`);
     if (!accountResponse.ok) throw new Error(`Alpaca account error (${accountResponse.status})`);
 
     const rawPositions = await positionsResponse.json();
     const rawAccount = await accountResponse.json();
+    const rawHistory = historyResponse.ok ? await historyResponse.json() : {};
+    const rawActivities = activitiesResponse.ok ? await activitiesResponse.json() : [];
+    const rawOrders = ordersResponse.ok ? await ordersResponse.json() : [];
     const positions = rawPositions.map((position: any) => ({
       symbol: position.symbol,
       asset_class: position.asset_class === "crypto" ? "crypto" : position.asset_class === "us_option" ? "option" : "equity",
@@ -68,7 +75,43 @@ Deno.serve(async (req) => {
       short_market_value: Number(rawAccount.short_market_value),
       accrued_fees: Number(rawAccount.accrued_fees || 0),
     };
-    return json({ connected: true, account, positions, as_of: new Date().toISOString() });
+    const timestamps = rawHistory.timestamp || [], equities = rawHistory.equity || [], pnl = rawHistory.profit_loss || [], pnlPct = rawHistory.profit_loss_pct || [];
+    const history = timestamps.map((timestamp: number, index: number) => ({
+      timestamp,
+      equity: Number(equities[index] || 0),
+      profit_loss: Number(pnl[index] || 0),
+      profit_loss_pct: Number(pnlPct[index] || 0) * 100,
+    })).filter((point: any) => point.equity > 0);
+    const fills = rawActivities.map((fill: any) => ({
+      activity_id: fill.id,
+      order_id: fill.order_id,
+      symbol: fill.symbol,
+      side: fill.side,
+      quantity: Number(fill.qty),
+      cumulative_quantity: Number(fill.cum_qty),
+      price: Number(fill.price),
+      transaction_time: fill.transaction_time,
+    }));
+    let reconciledOrders = 0;
+    const brokerOrderIds = rawOrders.map((order: any) => order.id).filter(Boolean);
+    if (brokerOrderIds.length) {
+      const { data: localOrders } = await admin.from("bg_orders").select("id,trade_id,broker_order_id,status").eq("user_id", user.id).in("broker_order_id", brokerOrderIds);
+      const brokerOrders = new Map(rawOrders.map((order: any) => [order.id, order]));
+      for (const localOrder of localOrders || []) {
+        const brokerOrder: any = brokerOrders.get(localOrder.broker_order_id);
+        if (!brokerOrder) continue;
+        if (localOrder.status !== brokerOrder.status) {
+          await admin.from("bg_orders").update({ status: brokerOrder.status, raw_response: brokerOrder }).eq("id", localOrder.id);
+          reconciledOrders++;
+        }
+        if (localOrder.trade_id && brokerOrder.status === "filled") {
+          const { data: trade } = await admin.from("bg_trades").select("status").eq("id", localOrder.trade_id).maybeSingle();
+          if (trade?.status === "pending") await admin.from("bg_trades").update({ status: "open", quantity: Number(brokerOrder.filled_qty || 0), average_entry: Number(brokerOrder.filled_avg_price || 0), opened_at: brokerOrder.filled_at || new Date().toISOString() }).eq("id", localOrder.trade_id);
+          else if (trade?.status === "closing") await admin.from("bg_trades").update({ status: "closed", closed_at: brokerOrder.filled_at || new Date().toISOString() }).eq("id", localOrder.trade_id);
+        }
+      }
+    }
+    return json({ connected: true, account, positions, history, fills, reconciled_orders: reconciledOrders, as_of: new Date().toISOString() });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Unable to load portfolio" }, 500);
   }

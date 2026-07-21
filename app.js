@@ -83,6 +83,24 @@ async function getConnection() {
   catch (error) { console.warn("Unable to read saved Alpaca connection status", error); return null; }
 }
 
+function renderEquityHistory(history = []) {
+  if (history.length < 2) return `<div class="empty compact"><strong>Equity history will appear after Alpaca has at least two daily observations.</strong></div>`;
+  const values = history.map((point) => Number(point.equity)), width = 900, height = 180, pad = 8;
+  const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
+  const points = values.map((value, index) => `${(index / (values.length - 1) * width).toFixed(1)},${(height - pad - (value - min) / span * (height - pad * 2)).toFixed(1)}`);
+  const first = new Date(Number(history[0].timestamp) * 1000), last = new Date(Number(history.at(-1).timestamp) * 1000), change = values.at(-1) - values[0], changePct = values[0] ? change / values[0] * 100 : 0;
+  return `<div class="card equity-panel"><svg class="equity-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Paper equity over the last 30 days"><line class="grid" x1="0" y1="${height / 2}" x2="${width}" y2="${height / 2}"/><polygon class="area" points="0,${height} ${points.join(" ")} ${width},${height}"/><polyline class="line" points="${points.join(" ")}"/></svg><div class="equity-chart-labels"><span>${first.toLocaleDateString()}</span><strong class="${change > 0 ? "profit" : change < 0 ? "loss" : ""}">${change >= 0 ? "+" : ""}${money(change)} · ${changePct >= 0 ? "+" : ""}${pct(changePct)}</strong><span>${last.toLocaleDateString()}</span></div></div>`;
+}
+
+function renderRiskHealth(account, positions = []) {
+  if (!account) return `<div class="card risk-health"><div class="subtle">Connect Alpaca to calculate portfolio-level risk indicators.</div></div>`;
+  const equity = Number(account.equity || 0), exposure = positions.reduce((sum, position) => sum + Math.abs(Number(position.market_value || 0)), 0), exposurePct = equity ? exposure / equity * 100 : 0;
+  const largest = positions.reduce((current, position) => Math.abs(Number(position.market_value || 0)) > Math.abs(Number(current?.market_value || 0)) ? position : current, null), concentrationPct = equity && largest ? Math.abs(Number(largest.market_value)) / equity * 100 : 0;
+  const dailyPct = account.last_equity ? (Number(account.equity) / Number(account.last_equity) - 1) * 100 : 0;
+  const row = (label, value, level, note) => `<div class="risk-health-row"><strong>${label}</strong><span class="risk-badge ${level}">${value}</span><span>${note}</span></div>`;
+  return `<div class="card risk-health">${row("Total gross exposure", pct(exposurePct), exposurePct >= 100 ? "danger" : exposurePct >= 75 ? "warning" : "", exposurePct >= 100 ? "At or above account equity; new exposure deserves review." : exposurePct >= 75 ? "Portfolio utilization is elevated." : "Exposure is within a moderate utilization band.")}${row("Largest position", largest ? `${escapeHtml(largest.symbol)} · ${pct(concentrationPct)}` : "None", concentrationPct >= 30 ? "danger" : concentrationPct >= 20 ? "warning" : "", concentrationPct >= 30 ? "A single position represents substantial account concentration." : concentrationPct >= 20 ? "Single-symbol concentration is elevated." : "No position exceeds the 20% attention threshold.")}${row("Today's equity move", `${dailyPct >= 0 ? "+" : ""}${pct(dailyPct)}`, dailyPct <= -5 ? "danger" : dailyPct <= -3 ? "warning" : "", dailyPct <= -5 ? "Consider pausing new entries and reviewing open risk." : dailyPct <= -3 ? "Daily drawdown has crossed the 3% attention threshold." : "No account-level drawdown alert is active.")}</div>`;
+}
+
 async function loadDashboard() {
   const [{ data: botData }, connection, { data: backtests }, portfolio] = await Promise.all([
     supabase.from("bg_bots").select("id,name,bot_type,status,asset_class,symbol,direction,max_allocation,max_active_trades,start_condition,take_profit_pct,stop_loss_pct,cooldown_seconds,session_policy,created_at").order("created_at", { ascending: false }),
@@ -127,6 +145,10 @@ async function loadDashboard() {
       <div><span>Buying power</span><strong>${account ? money(account.buying_power) : "—"}</strong></div>
       <div><span>Long market value</span><strong>${account ? money(account.long_market_value) : "—"}</strong></div>
     </div>
+    <div class="section-head"><h3>30-day paper equity</h3></div>
+    ${renderEquityHistory(portfolio?.history || [])}
+    <div class="section-head"><h3>Portfolio risk health</h3><span class="subtle">Advisory indicators · not automatic limits</span></div>
+    ${renderRiskHealth(account, positions)}
     <div class="section-head"><h3>Open exposure</h3></div>
     <div class="card overview-assets">${assetSummary}</div>
     <div class="section-head"><h3>Automation summary</h3></div>
@@ -339,18 +361,28 @@ function showBacktestForm(botId) {
 
 let activityTimer = null;
 async function closeMarketPosition(symbol,button){button.disabled=true;button.textContent="Closing…";try{await invoke("close-position",{symbol});await loadActivity();}catch(error){button.disabled=false;button.textContent="Close at market";button.title=error.message||"Unable to close position";alert(error.message||"Unable to close position");}}
-async function renderActivityPositions(){
+function fillAssetClass(fill, bot) {
+  if (bot?.asset_class) return bot.asset_class;
+  if (/\d{6}[CP]\d{8}$/.test(fill.symbol || "")) return "option";
+  if ((fill.symbol || "").includes("/") || /^(BTC|ETH|SOL|DOGE|AVAX|LINK|LTC|BCH|UNI|AAVE|SHIB|DOT|MATIC)USD$/.test(fill.symbol || "")) return "crypto";
+  return "equity";
+}
+async function renderActivityPositions(orderAttribution = new Map()){
   const snapshot=await invoke("portfolio-snapshot",{}).catch(error=>({error:error.message,positions:[]}));
   const positions=(snapshot.positions||[]).filter(position=>position.asset_class===activityFilter),total=positions.reduce((sum,position)=>sum+Number(position.unrealized_pl||0),0),panel=document.createElement("section");panel.className="position-panel";
   const rows=positions.map(position=>`<div class="position-row"><div><strong>${escapeHtml(position.symbol)}</strong><span>${escapeHtml(position.side)} · ${Number(position.qty).toLocaleString(undefined,{maximumFractionDigits:8})}</span></div><div><span>Average entry</span><strong>${money(position.avg_entry_price)}</strong></div><div><span>Current price</span><strong>${money(position.current_price)}</strong></div><div><span>Market value</span><strong>${money(position.market_value)}</strong></div><div><span>Unrealized P&amp;L</span><strong class="${position.unrealized_pl>0?"profit":position.unrealized_pl<0?"loss":""}">${money(position.unrealized_pl)} · ${pct(position.unrealized_plpc)}</strong></div><button class="position-close" data-close-position="${escapeHtml(position.symbol)}">Close at market</button></div>`).join("");
   const body=snapshot.error?`<div class="callout">${escapeHtml(snapshot.error)}</div>`:rows?`<div class="position-list">${rows}</div>`:`<div class="empty compact"><strong>No open ${activityFilter} positions</strong></div>`;
   panel.innerHTML=`<div class="section-head"><h3>Open ${activityFilter==="equity"?"stock":activityFilter} positions</h3><div><strong class="${total>0?"profit":total<0?"loss":""}">${money(total)}</strong> <span class="subtle">unrealized P&amp;L · ${snapshot.as_of?new Date(snapshot.as_of).toLocaleTimeString():"unavailable"}</span></div></div>${body}`;content.querySelector(".activity-summary")?.insertAdjacentElement("afterend",panel);
+  const fills=(snapshot.fills||[]).map(fill=>({fill,bot:orderAttribution.get(fill.order_id)})).filter(({fill,bot})=>fillAssetClass(fill,bot)===activityFilter).slice(0,20),fillPanel=document.createElement("section");
+  const fillRows=fills.map(({fill,bot})=>`<div class="fill-row"><div><strong>${escapeHtml(fill.symbol)}</strong><span>${bot?escapeHtml(bot.name):"External or unattributed order"}</span></div><div><span>Side</span><strong class="fill-side ${fill.side==="sell"?"loss":"profit"}">${escapeHtml(fill.side)}</strong></div><div><span>Quantity</span><strong>${Number(fill.quantity).toLocaleString(undefined,{maximumFractionDigits:8})}</strong></div><div><span>Fill price</span><strong>${money(fill.price)}</strong></div><div><span>Executed</span><strong>${new Date(fill.transaction_time).toLocaleString()}</strong></div></div>`).join("");
+  fillPanel.innerHTML=`<div class="section-head"><h3>Recent broker fills</h3><span class="subtle">Latest 20 · attributed by Alpaca order ID</span></div>${fillRows?`<div class="fill-list">${fillRows}</div>`:`<div class="empty compact"><strong>No recent ${activityFilter} fills</strong></div>`}`;panel.insertAdjacentElement("afterend",fillPanel);
 }
 async function loadActivity() {
-  const [{ data: statuses }, { data: activityBots }] = await Promise.all([supabase.from("bg_bot_status").select("*").order("checked_at", { ascending: false }), supabase.from("bg_bots").select("id,name,symbol,status,asset_class").order("created_at", { ascending: false })]); const statusByBot = new Map((statuses || []).map((status) => [status.bot_id, status]));if(activityBots)activityBots.splice(0,activityBots.length,...activityBots.filter(bot=>bot.asset_class===activityFilter));
+  const [{ data: statuses }, { data: allActivityBots }, { data: activityOrders }, { data: activityTrades }, { data: activityRuns }, { data: orderEvents }] = await Promise.all([supabase.from("bg_bot_status").select("*").order("checked_at", { ascending: false }), supabase.from("bg_bots").select("id,name,symbol,status,asset_class").order("created_at", { ascending: false }),supabase.from("bg_orders").select("broker_order_id,trade_id").not("broker_order_id","is",null).order("created_at",{ascending:false}).limit(500),supabase.from("bg_trades").select("id,run_id").limit(500),supabase.from("bg_bot_runs").select("id,bot_id").limit(500),supabase.from("bg_bot_events").select("bot_id,details").order("created_at",{ascending:false}).limit(500)]); const statusByBot = new Map((statuses || []).map((status) => [status.bot_id, status])),activityBots=(allActivityBots||[]).filter(bot=>bot.asset_class===activityFilter),botById=new Map((allActivityBots||[]).map(bot=>[bot.id,bot])),runBot=new Map((activityRuns||[]).map(run=>[run.id,run.bot_id])),tradeBot=new Map((activityTrades||[]).map(trade=>[trade.id,runBot.get(trade.run_id)])),orderAttribution=new Map((activityOrders||[]).map(order=>[order.broker_order_id,botById.get(tradeBot.get(order.trade_id))]));
+  (orderEvents||[]).forEach(event=>{if(event.details?.broker_order_id&&!orderAttribution.has(event.details.broker_order_id))orderAttribution.set(event.details.broker_order_id,botById.get(event.bot_id));});
   const cards = (activityBots || []).map((bot) => { const status = statusByBot.get(bot.id); if (bot.status !== "active") return `<article class="decision-card muted"><div class="decision-head"><div><strong>${escapeHtml(bot.name)}</strong><span>${escapeHtml(bot.symbol)} · OFF</span></div><b>Paused</b></div><p>This bot is OFF and was not evaluated in the current cycle.</p></article>`; if (!status) return `<article class="decision-card"><div class="decision-head"><div><strong>${escapeHtml(bot.name)}</strong><span>${escapeHtml(bot.symbol)} · waiting</span></div><b>Pending</b></div><p>Waiting for its first scheduled evaluation.</p></article>`; const conditions = status.details?.conditions || []; return `<article class="decision-card ${status.reason_code === "error" ? "error" : status.reason_code.includes("submitted") ? "success" : ""}"><div class="decision-head"><div><strong>${escapeHtml(bot.name)}</strong><span>${escapeHtml(bot.symbol)} · checked ${new Date(status.checked_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div><b>${escapeHtml(status.reason_code.replaceAll("_", " "))}</b></div><p>${escapeHtml(status.message)}</p>${conditions.length ? `<div class="condition-status">${conditions.map((condition) => `<span class="${condition.passed ? "pass" : "fail"}">${condition.passed ? "✓" : "×"} ${escapeHtml(conditionDefinition(condition.type)[1])}</span>`).join("")}</div>` : ""}${status.details?.last_price ? `<div class="subtle">Last price ${money(status.details.last_price)} · ${escapeHtml(status.details.timeframe || "")}</div>` : ""}</article>`; }).join("");
   content.innerHTML = `<div class="activity-summary"><div><span class="eyebrow">LATEST WORKER CYCLE</span><h3>Why each bot acted—or waited</h3><p>One status per bot is replaced every five-minute cycle. This page refreshes automatically every 30 seconds.</p></div><button class="secondary" id="refresh-activity">Refresh now</button></div><div class="decision-list">${cards || `<div class="empty"><h3>No bots configured</h3></div>`}</div>`; $("#refresh-activity")?.addEventListener("click", loadActivity); clearTimeout(activityTimer); activityTimer = setTimeout(() => document.querySelector('[data-view="activity"]')?.classList.contains("active") && loadActivity(), 30000);
-  await renderActivityPositions();
+  await renderActivityPositions(orderAttribution);
 }
 
 function switchView(view) {
