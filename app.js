@@ -54,6 +54,7 @@ $("#new-bot").addEventListener("click", showBotForm);
 $("#random-bot").addEventListener("click", showRandomBotForm);
 $("#random-option-bot").addEventListener("click", showRandomOptionBotForm);
 $("#random-ten").addEventListener("click", showBulkRandomForm);
+$("#prune-bots").addEventListener("click", pruneUnderperformingBots);
 document.addEventListener("click", (event) => {
   const nav = event.target.closest("[data-view]");
   if (nav) switchView(nav.dataset.view);
@@ -80,6 +81,7 @@ async function loadDashboard() {
   backtestSummary = new Map();
   (backtests || []).forEach((test) => { const current = backtestSummary.get(test.bot_id) || { seconds: 0, runs: 0, signalOnlyRuns: 0, signals: 0, pnl: 0, capital: 0, profitPct: null, estimatedPnl: 0, estimatedCapital: 0, estimatedPct: null }; current.seconds += Number(test.duration_seconds); current.runs++; if (test.status === "signal_only") { current.signalOnlyRuns++; current.signals += Number(test.signal_count || 0); if (test.estimated_pnl != null) { current.estimatedPnl += Number(test.estimated_pnl); current.estimatedCapital += Number(test.initial_capital); current.estimatedPct = current.estimatedPnl / current.estimatedCapital * 100; } } if (test.net_pnl != null) { current.pnl += Number(test.net_pnl); current.capital += Number(test.initial_capital); current.profitPct = current.capital ? current.pnl / current.capital * 100 : null; } backtestSummary.set(test.bot_id, current); });
   bots = (botData || []).sort((a, b) => { const aProfit = backtestSummary.get(a.id)?.profitPct, bProfit = backtestSummary.get(b.id)?.profitPct; if (aProfit != null || bProfit != null) return (bProfit ?? -Infinity) - (aProfit ?? -Infinity); return new Date(b.created_at) - new Date(a.created_at); });
+  updatePruneButton();
   const active = bots.filter((b) => b.status === "active").length;
   content.innerHTML = `
     <div class="cards">
@@ -110,6 +112,31 @@ async function toggleBot(botId) {
 
 async function deleteBot(botId, button) {
   button.disabled = true; const { error } = await supabase.from("bg_bots").delete().eq("id", botId); if (error) { button.disabled = false; console.error("Bot removal failed", error); return; } await loadDashboard();
+}
+
+function botsBelowThreshold(threshold = 2) {
+  return bots.filter((bot) => {
+    const summary = backtestSummary.get(bot.id);
+    const result = bot.asset_class === "option" ? summary?.estimatedPct : summary?.profitPct;
+    return result != null && Number.isFinite(result) && result < threshold;
+  });
+}
+
+function updatePruneButton() {
+  const button = $("#prune-bots"); if (!button) return;
+  const count = botsBelowThreshold().length;
+  button.disabled = count === 0;
+  button.textContent = count ? `Remove under 2% (${count})` : "Remove under 2%";
+  button.title = count ? `Immediately remove ${count} tested bot${count === 1 ? "" : "s"} with a cumulative return below 2%` : "No tested bots are currently below 2%";
+}
+
+async function pruneUnderperformingBots() {
+  const button = $("#prune-bots");
+  const candidates = botsBelowThreshold(); if (!candidates.length) return;
+  button.disabled = true; button.textContent = `Removing ${candidates.length}…`;
+  const { error } = await supabase.from("bg_bots").delete().in("id", candidates.map((bot) => bot.id));
+  if (error) { console.error("Bulk bot removal failed", error); button.textContent = "Removal failed — retry"; button.disabled = false; return; }
+  await loadDashboard();
 }
 
 function formatDuration(seconds) {
