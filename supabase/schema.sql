@@ -37,7 +37,7 @@ create table if not exists public.bg_bots (
   connection_id uuid references public.bg_broker_connections(id) on delete set null,
   name text not null check (char_length(name) between 1 and 100),
   bot_type text not null default 'dca' check (bot_type in ('dca','grid','signal','credit_spread')),
-  status text not null default 'draft' check (status in ('draft','active','paused','stopped','error')),
+  status text not null default 'active' check (status in ('draft','active','paused','stopped','error')),
   broker text not null default 'alpaca',
   environment text not null default 'paper' check (environment in ('paper','live')),
   asset_class text not null check (asset_class in ('equity','option')),

@@ -24,6 +24,14 @@
 .randomized-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
 .randomized-list span{padding:6px 8px;border-radius:7px;background:#e8f1eb;color:#315748;font-size:11px}
 .row-actions{display:flex;gap:7px;justify-content:flex-end}
+.bot-toggle{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;background:#edf0ee;color:var(--muted);padding:7px 10px;font-size:11px;font-weight:800}
+.bot-toggle span{width:9px;height:9px;border-radius:50%;background:#a8b2ac}
+.bot-toggle.on{background:#e4f3e9;color:var(--green);border-color:#b8d9c5}
+.bot-toggle.on span{background:#3ca66c;box-shadow:0 0 0 3px rgba(60,166,108,.13)}
+.profit{color:#188653}.loss{color:var(--danger)}
+.delete-button{border:1px solid #efd4d4;border-radius:9px;background:#fff7f7;color:var(--danger);padding:7px 10px;font-size:18px;line-height:1}
+.danger-button{border:0;border-radius:10px;background:var(--danger);color:white;padding:11px 17px;font-weight:700}
+.delete-warning{padding:16px;border:1px solid #efd4d4;border-radius:10px;background:#fff7f7;color:#7c2929;font-size:13px}
 .detail-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .detail-grid div,.backtest-result div{padding:13px;border:1px solid var(--line);border-radius:10px;background:#f8faf8}
 .detail-grid span,.backtest-result span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}

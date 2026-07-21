@@ -60,6 +60,8 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-connect]")) showConnectionForm();
   const details = event.target.closest("[data-bot-details]"); if (details) showBotDetails(details.dataset.botDetails);
   const backtest = event.target.closest("[data-backtest]"); if (backtest) showBacktestForm(backtest.dataset.backtest);
+  const toggle = event.target.closest("[data-toggle-bot]"); if (toggle) toggleBot(toggle.dataset.toggleBot);
+  const remove = event.target.closest("[data-delete-bot]"); if (remove) showDeleteBot(remove.dataset.deleteBot);
   if (event.target.closest("[data-close-modal]")) modal.close();
 });
 
@@ -72,11 +74,11 @@ async function loadDashboard() {
   const [{ data: botData }, connection, { data: backtests }] = await Promise.all([
     supabase.from("bg_bots").select("id,name,bot_type,status,asset_class,symbol,direction,max_allocation,max_active_trades,start_condition,take_profit_pct,stop_loss_pct,cooldown_seconds,session_policy,created_at").order("created_at", { ascending: false }),
     getConnection(),
-    supabase.from("bg_backtests").select("bot_id,status,duration_seconds,net_pnl,return_pct,signal_count,created_at").in("status", ["completed", "signal_only"]),
+    supabase.from("bg_backtests").select("bot_id,status,duration_seconds,initial_capital,net_pnl,return_pct,signal_count,created_at").in("status", ["completed", "signal_only"]),
   ]);
   backtestSummary = new Map();
-  (backtests || []).forEach((test) => { const current = backtestSummary.get(test.bot_id) || { seconds: 0, runs: 0, pnl: 0 }; current.seconds += Number(test.duration_seconds); current.runs++; current.pnl += Number(test.net_pnl || 0); backtestSummary.set(test.bot_id, current); });
-  bots = (botData || []).sort((a, b) => (backtestSummary.get(b.id)?.seconds || 0) - (backtestSummary.get(a.id)?.seconds || 0) || new Date(b.created_at) - new Date(a.created_at));
+  (backtests || []).forEach((test) => { const current = backtestSummary.get(test.bot_id) || { seconds: 0, runs: 0, pnl: 0, capital: 0, profitPct: null }; current.seconds += Number(test.duration_seconds); current.runs++; if (test.net_pnl != null) { current.pnl += Number(test.net_pnl); current.capital += Number(test.initial_capital); current.profitPct = current.capital ? current.pnl / current.capital * 100 : null; } backtestSummary.set(test.bot_id, current); });
+  bots = (botData || []).sort((a, b) => { const aProfit = backtestSummary.get(a.id)?.profitPct, bProfit = backtestSummary.get(b.id)?.profitPct; if (aProfit != null || bProfit != null) return (bProfit ?? -Infinity) - (aProfit ?? -Infinity); return new Date(b.created_at) - new Date(a.created_at); });
   const active = bots.filter((b) => b.status === "active").length;
   content.innerHTML = `
     <div class="cards">
@@ -92,7 +94,21 @@ async function loadDashboard() {
 
 function renderBots() {
   if (!bots.length) return `<div class="empty"><h3>No bots yet</h3><div>Create a DCA bot and preview its complete averaging schedule.</div><button class="primary" data-new-bot>Create your first bot</button></div>`;
-  return `<div class="bot-list">${bots.map((bot) => { const summary = backtestSummary.get(bot.id) || { seconds: 0, runs: 0 }; return `<div class="bot-row"><div><div class="bot-name">${escapeHtml(bot.name)}</div><div class="subtle">${escapeHtml(bot.symbol)} · ${escapeHtml(bot.bot_type.replaceAll("_", " "))}</div></div><div><span class="status">${escapeHtml(bot.status)}</span></div><div><div class="subtle">BACKTESTED</div>${formatDuration(summary.seconds)}<div class="subtle">${summary.runs} run${summary.runs === 1 ? "" : "s"}</div></div><div><div class="subtle">MAX ALLOCATION</div>${money(bot.max_allocation)}</div><div class="row-actions"><button class="secondary" data-bot-details="${bot.id}">Details</button><button class="primary" data-backtest="${bot.id}">Backtest</button></div></div>`; }).join("")}</div>`;
+  return `<div class="bot-list">${bots.map((bot) => { const summary = backtestSummary.get(bot.id) || { seconds: 0, runs: 0, profitPct: null }; const isOn = bot.status === "active"; return `<div class="bot-row"><div><div class="bot-name">${escapeHtml(bot.name)}</div><div class="subtle">${escapeHtml(bot.symbol)} · ${escapeHtml(bot.bot_type.replaceAll("_", " "))}</div></div><button class="bot-toggle ${isOn ? "on" : ""}" data-toggle-bot="${bot.id}" role="switch" aria-checked="${isOn}"><span></span>${isOn ? "ON" : "OFF"}</button><div><div class="subtle">BACKTEST PROFIT</div><strong class="${summary.profitPct > 0 ? "profit" : summary.profitPct < 0 ? "loss" : ""}">${summary.profitPct == null ? "Not tested" : pct(summary.profitPct)}</strong><div class="subtle">${formatDuration(summary.seconds)} · ${summary.runs} run${summary.runs === 1 ? "" : "s"}</div></div><div><div class="subtle">MAX ALLOCATION</div>${money(bot.max_allocation)}</div><div class="row-actions"><button class="secondary" data-bot-details="${bot.id}">Details</button><button class="primary" data-backtest="${bot.id}">Backtest</button><button class="delete-button" data-delete-bot="${bot.id}" aria-label="Delete ${escapeHtml(bot.name)}">×</button></div></div>`; }).join("")}</div>`;
+}
+
+async function toggleBot(botId) {
+  const bot = bots.find((item) => item.id === botId); if (!bot) return;
+  const next = bot.status === "active" ? "paused" : "active";
+  const { error } = await supabase.from("bg_bots").update({ status: next, updated_at: new Date().toISOString() }).eq("id", botId);
+  if (!error) await loadDashboard();
+}
+
+function showDeleteBot(botId) {
+  const bot = bots.find((item) => item.id === botId); if (!bot) return;
+  $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Remove bot?</h3><p>${escapeHtml(bot.name)}</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="delete-warning">This permanently removes the bot, its configuration, backtests, trades, and event history.</div><p class="form-message" id="delete-message"></p></div><div class="modal-foot"><button class="secondary" data-close-modal>Cancel</button><button class="danger-button" id="confirm-delete">Remove bot</button></div>`;
+  modal.showModal();
+  $("#confirm-delete").addEventListener("click", async (event) => { event.currentTarget.disabled = true; const { error } = await supabase.from("bg_bots").delete().eq("id", botId); if (error) { $("#delete-message").textContent = error.message; event.currentTarget.disabled = false; return; } modal.close(); await loadDashboard(); });
 }
 
 function formatDuration(seconds) {
@@ -340,7 +356,7 @@ function showRandomBotForm() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.submitter; button.disabled = true;
     const data = new FormData(form); const risk = Number(data.get("risk")); const schedule = randomSchedule(selected, risk);
-    const payload = { user_id: session.user.id, name: `${data.get("symbol").toUpperCase().trim()} ${selected.name}`, bot_type: "dca", status: "draft", broker: "alpaca", environment: "paper", asset_class: data.get("assetClass"), symbol: data.get("symbol").toUpperCase().trim(), direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, sizing_mode: "fixed" }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: data.get("horizon") === "intraday" ? 1800 : 86400, session_policy: data.get("sessionPolicy") };
+    const payload = { user_id: session.user.id, name: `${data.get("symbol").toUpperCase().trim()} ${selected.name}`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: data.get("assetClass"), symbol: data.get("symbol").toUpperCase().trim(), direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, sizing_mode: "fixed" }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: data.get("horizon") === "intraday" ? 1800 : 86400, session_policy: data.get("sessionPolicy") };
     const { data: bot, error } = await supabase.from("bg_bots").insert(payload).select().single();
     if (error) { $("#random-message").textContent = error.message; button.disabled = false; return; }
     const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
@@ -417,7 +433,7 @@ function showRandomOptionBotForm() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.submitter; button.disabled = true; const values = render(false); const data = new FormData(form);
     const [minDte, maxDte] = String(data.get("dte")).split(",").map(Number); const symbol = String(data.get("symbol")).toUpperCase().trim();
-    const payload = { user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "credit_spread", status: "draft", broker: "alpaca", environment: "paper", asset_class: "option", symbol, direction: selected.bias === "bullish" ? "long" : "short", max_allocation: values.totalRisk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields }, take_profit_pct: Number(data.get("profitClose")), stop_loss_pct: null, cooldown_seconds: 86400, session_policy: "regular" };
+    const payload = { user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "credit_spread", status: "active", broker: "alpaca", environment: "paper", asset_class: "option", symbol, direction: selected.bias === "bullish" ? "long" : "short", max_allocation: values.totalRisk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields }, take_profit_pct: Number(data.get("profitClose")), stop_loss_pct: null, cooldown_seconds: 86400, session_policy: "regular" };
     const { data: bot, error } = await supabase.from("bg_bots").insert(payload).select().single();
     if (error) { $("#option-message").textContent = error.message; button.disabled = false; return; }
     const { error: spreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: bot.id, spread_type: selected.spreadType, min_dte: minDte, max_dte: maxDte, short_delta_target: values.delta, target_width: values.width, minimum_credit: values.credit, max_bid_ask_pct: Number(data.get("maxSpread")), contracts: values.contracts, max_risk: values.totalRisk, profit_close_pct: Number(data.get("profitClose")), loss_close_multiple: selected.lossCloseMultiple, exit_dte: Number(data.get("exitDte")) });
@@ -479,7 +495,7 @@ function showBotForm() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.submitter; button.disabled = true;
     const data = new FormData(form); const schedule = scheduleFromForm(data);
-    const payload = { user_id: session.user.id, name: data.get("name"), bot_type: "dca", status: "draft", broker: "alpaca", environment: "paper", asset_class: data.get("assetClass"), symbol: data.get("symbol").toUpperCase().trim(), direction: data.get("direction"), max_allocation: schedule.at(-1).cumulative, max_active_trades: Number(data.get("maxActiveTrades")), start_condition: { ...readConditions(form), sizing_mode: data.get("sizingMode") }, take_profit_pct: Number(data.get("takeProfit")), stop_loss_pct: Number(data.get("stopLoss")) || null, cooldown_seconds: Number(data.get("cooldownMinutes")) * 60, session_policy: data.get("sessionPolicy") };
+    const payload = { user_id: session.user.id, name: data.get("name"), bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: data.get("assetClass"), symbol: data.get("symbol").toUpperCase().trim(), direction: data.get("direction"), max_allocation: schedule.at(-1).cumulative, max_active_trades: Number(data.get("maxActiveTrades")), start_condition: { ...readConditions(form), sizing_mode: data.get("sizingMode") }, take_profit_pct: Number(data.get("takeProfit")), stop_loss_pct: Number(data.get("stopLoss")) || null, cooldown_seconds: Number(data.get("cooldownMinutes")) * 60, session_policy: data.get("sessionPolicy") };
     const { data: bot, error } = await supabase.from("bg_bots").insert(payload).select().single();
     if (error) { $("#bot-message").textContent = error.message; button.disabled = false; return; }
     const rows = schedule.map((s) => ({ bot_id: bot.id, step_number: s.step, deviation_pct: s.deviation, order_amount: s.amount }));
