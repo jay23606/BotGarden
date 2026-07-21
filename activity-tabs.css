@@ -1,0 +1,2 @@
+.activity-tabs{display:flex;gap:6px;padding:5px;background:#e8eee9;border-radius:12px}.activity-tabs button{border:0;background:transparent;color:var(--muted);padding:9px 14px;border-radius:9px;font-weight:700}.activity-tabs button.active{background:white;color:var(--ink);box-shadow:0 2px 8px rgba(20,56,44,.09)}
+@media(max-width:760px){.topbar{align-items:flex-start;gap:12px}.activity-tabs button{padding:8px 10px}}

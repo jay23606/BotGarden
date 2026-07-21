@@ -11,6 +11,7 @@ let bots = [];
 let backtestSummary = new Map();
 let latestBacktest = new Map();
 let currentView = "dashboard";
+let activityFilter = "equity";
 
 if (!configured) $("#setup-banner").classList.remove("hidden");
 
@@ -18,7 +19,7 @@ function setSession(next) {
   session = next;
   authView.classList.toggle("hidden", !!session);
   appView.classList.toggle("hidden", !session);
-  if (session) loadDashboard();
+  if (session) switchView("dashboard");
 }
 
 async function boot() {
@@ -65,6 +66,7 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-new-crypto]")) showCryptoGridForm();
   if (event.target.closest("[data-new-crypto-batch]")) showCryptoBatchForm();
   if (event.target.closest("[data-prune-crypto]")) pruneUnderperformingBots("crypto");
+  const activityTab=event.target.closest("[data-activity-filter]");if(activityTab){activityFilter=activityTab.dataset.activityFilter;document.querySelectorAll("[data-activity-filter]").forEach(button=>button.classList.toggle("active",button.dataset.activityFilter===activityFilter));loadActivity();}
   if (event.target.closest("[data-connect]")) showConnectionForm();
   const details = event.target.closest("[data-bot-details]"); if (details) showBotDetails(details.dataset.botDetails);
   const backtest = event.target.closest("[data-backtest]"); if (backtest) showBacktestForm(backtest.dataset.backtest);
@@ -283,7 +285,7 @@ function showBacktestForm(botId) {
 
 let activityTimer = null;
 async function loadActivity() {
-  const [{ data: statuses }, { data: activityBots }] = await Promise.all([supabase.from("bg_bot_status").select("*").order("checked_at", { ascending: false }), supabase.from("bg_bots").select("id,name,symbol,status,asset_class").order("created_at", { ascending: false })]); const statusByBot = new Map((statuses || []).map((status) => [status.bot_id, status]));
+  const [{ data: statuses }, { data: activityBots }] = await Promise.all([supabase.from("bg_bot_status").select("*").order("checked_at", { ascending: false }), supabase.from("bg_bots").select("id,name,symbol,status,asset_class").order("created_at", { ascending: false })]); const statusByBot = new Map((statuses || []).map((status) => [status.bot_id, status]));if(activityBots)activityBots.splice(0,activityBots.length,...activityBots.filter(bot=>bot.asset_class===activityFilter));
   const cards = (activityBots || []).map((bot) => { const status = statusByBot.get(bot.id); if (bot.status !== "active") return `<article class="decision-card muted"><div class="decision-head"><div><strong>${escapeHtml(bot.name)}</strong><span>${escapeHtml(bot.symbol)} · OFF</span></div><b>Paused</b></div><p>This bot is OFF and was not evaluated in the current cycle.</p></article>`; if (!status) return `<article class="decision-card"><div class="decision-head"><div><strong>${escapeHtml(bot.name)}</strong><span>${escapeHtml(bot.symbol)} · waiting</span></div><b>Pending</b></div><p>Waiting for its first scheduled evaluation.</p></article>`; const conditions = status.details?.conditions || []; return `<article class="decision-card ${status.reason_code === "error" ? "error" : status.reason_code.includes("submitted") ? "success" : ""}"><div class="decision-head"><div><strong>${escapeHtml(bot.name)}</strong><span>${escapeHtml(bot.symbol)} · checked ${new Date(status.checked_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div><b>${escapeHtml(status.reason_code.replaceAll("_", " "))}</b></div><p>${escapeHtml(status.message)}</p>${conditions.length ? `<div class="condition-status">${conditions.map((condition) => `<span class="${condition.passed ? "pass" : "fail"}">${condition.passed ? "✓" : "×"} ${escapeHtml(conditionDefinition(condition.type)[1])}</span>`).join("")}</div>` : ""}${status.details?.last_price ? `<div class="subtle">Last price ${money(status.details.last_price)} · ${escapeHtml(status.details.timeframe || "")}</div>` : ""}</article>`; }).join("");
   content.innerHTML = `<div class="activity-summary"><div><span class="eyebrow">LATEST WORKER CYCLE</span><h3>Why each bot acted—or waited</h3><p>One status per bot is replaced every five-minute cycle. This page refreshes automatically every 30 seconds.</p></div><button class="secondary" id="refresh-activity">Refresh now</button></div><div class="decision-list">${cards || `<div class="empty"><h3>No bots configured</h3></div>`}</div>`; $("#refresh-activity")?.addEventListener("click", loadActivity); clearTimeout(activityTimer); activityTimer = setTimeout(() => document.querySelector('[data-view="activity"]')?.classList.contains("active") && loadActivity(), 30000);
 }
@@ -291,7 +293,8 @@ async function loadActivity() {
 function switchView(view) {
   currentView = view;
   if (view !== "activity") { clearTimeout(activityTimer); activityTimer = null; }
-  const cryptoMode = view === "crypto"; ["#prune-bots", "#random-ten", "#random-bot", "#stock-strategy", "#random-option-bot", "#new-bot"].forEach((selector) => $(selector)?.classList.toggle("hidden", cryptoMode));
+  const showSecuritiesActions = view === "bots"; ["#prune-bots", "#random-ten", "#random-bot", "#stock-strategy", "#random-option-bot", "#new-bot"].forEach((selector) => $(selector)?.classList.toggle("hidden", !showSecuritiesActions));
+  $("#activity-tabs")?.classList.toggle("hidden",view!=="activity");
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === view));
   $("#page-title").textContent = ({ dashboard: "Overview", bots: "Stocks & Options", crypto: "Crypto", activity: "Activity", settings: "Settings" })[view];
   if (view === "dashboard") return loadDashboard();

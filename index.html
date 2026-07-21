@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="styles.css?v=20260721-16">
   <link rel="stylesheet" href="conditions.css?v=20260721-25">
   <link rel="stylesheet" href="crypto.css?v=20260721-27">
+  <link rel="stylesheet" href="activity-tabs.css?v=20260721-31">
 </head>
 <body>
   <div id="setup-banner" class="setup-banner hidden">Add your Supabase URL and publishable key to <code>config.js</code> to enable sign-in.</div>
@@ -60,13 +61,13 @@
     <main class="workspace">
       <header class="topbar">
         <div><span class="eyebrow">BOTGARDEN</span><h2 id="page-title">Overview</h2></div>
-        <div class="topbar-actions"><button id="prune-bots" class="prune-button" disabled>Remove &lt;2% + untested</button><button id="random-ten" class="secondary">Random bots</button><button id="random-bot" class="secondary">↻ Random stock</button><button id="stock-strategy" class="secondary">+ Stock strategy</button><button id="random-option-bot" class="secondary">↻ Random option</button><button id="new-bot" class="primary">+ New bot</button></div>
+        <div id="activity-tabs" class="activity-tabs hidden" role="tablist"><button class="active" data-activity-filter="equity">Stocks</button><button data-activity-filter="option">Options</button><button data-activity-filter="crypto">Crypto</button></div><div class="topbar-actions"><button id="prune-bots" class="prune-button" disabled>Remove &lt;2% + untested</button><button id="random-ten" class="secondary">Random bots</button><button id="random-bot" class="secondary">↻ Random stock</button><button id="stock-strategy" class="secondary">+ Stock strategy</button><button id="random-option-bot" class="secondary">↻ Random option</button><button id="new-bot" class="primary">+ New bot</button></div>
       </header>
       <section id="page-content"></section>
     </main>
   </div>
 
   <dialog id="modal"><div id="modal-content"></div></dialog>
-  <script type="module" src="app.js?v=20260721-30"></script>
+  <script type="module" src="app.js?v=20260721-31"></script>
 </body>
 </html>
