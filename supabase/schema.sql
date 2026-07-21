@@ -40,7 +40,7 @@ create table if not exists public.bg_bots (
   status text not null default 'active' check (status in ('draft','active','paused','stopped','error')),
   broker text not null default 'alpaca',
   environment text not null default 'paper' check (environment in ('paper','live')),
-  asset_class text not null check (asset_class in ('equity','option')),
+  asset_class text not null check (asset_class in ('equity','option','crypto')),
   symbol text not null,
   direction text not null default 'long' check (direction in ('long','short')),
   max_allocation numeric(18,2) not null check (max_allocation > 0),
@@ -49,7 +49,7 @@ create table if not exists public.bg_bots (
   take_profit_pct numeric(9,4) check (take_profit_pct > 0),
   stop_loss_pct numeric(9,4) check (stop_loss_pct > 0),
   cooldown_seconds integer not null default 0 check (cooldown_seconds >= 0),
-  session_policy text not null default 'regular' check (session_policy in ('regular','extended')),
+  session_policy text not null default 'regular' check (session_policy in ('regular','extended','continuous')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

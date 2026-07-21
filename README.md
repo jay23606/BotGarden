@@ -18,6 +18,7 @@ BotGarden combines a static GitHub Pages interface with Supabase Auth, Postgres,
 - Configurable ticker discovery by sustained volume, latest-session volume, relative volume, or active price movement, with price and dollar-volume safety floors
 - Defined-risk credit spreads, debit spreads, and long-option strategies
 - Stock backtests using Alpaca historical IEX bars
+- A separate 24/7 crypto workspace with ATR-adaptive grid bots, fee-aware replay, and Alpaca paper execution
 - Explicitly labeled, low-confidence option replay estimates
 - Market-regime and volatility context for historical tests
 - Per-row underlying-price sparklines and cumulative result ranking
