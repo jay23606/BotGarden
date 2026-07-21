@@ -1,0 +1,16 @@
+.condition-builder{margin-top:26px;padding-top:24px;border-top:1px solid var(--line)}
+.condition-builder-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:14px}
+.condition-builder-head h3{font-size:17px}
+.condition-builder-head p{font-size:12px;color:var(--muted);margin:5px 0 0}
+.logic-control{display:flex;align-items:center;gap:9px;font-size:12px;font-weight:700}
+.logic-control select{width:auto;padding:8px 10px}
+.condition-row{border:1px solid var(--line);border-radius:12px;background:#f8faf8;padding:15px;margin:10px 0}
+.condition-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.condition-top strong{font-size:12px;color:var(--green);text-transform:uppercase;letter-spacing:.08em}
+.condition-top .text-button{margin:0;color:var(--danger);font-size:12px}
+.condition-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:10px 12px}
+.condition-grid label{display:grid;gap:6px;margin:0;font-size:12px;font-weight:600}
+.condition-params{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:10px 12px}
+.condition-grid input,.condition-grid select{padding:9px 10px}
+.condition-builder>.secondary{margin-top:2px}
+@media(max-width:650px){.condition-builder-head{display:block}.logic-control{margin-top:12px}.condition-grid,.condition-params{grid-template-columns:1fr}.condition-params{grid-column:auto}}
