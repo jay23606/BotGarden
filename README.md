@@ -25,6 +25,7 @@ This version intentionally saves bots as drafts. It does not submit orders yet.
 
    ```sh
    supabase functions deploy alpaca-connection
+   supabase functions deploy paper-runner --no-verify-jwt
    ```
 
 7. Serve locally with any static server or publish the repository through GitHub Pages.
@@ -44,5 +45,5 @@ Never commit the generated key, Supabase service-role key, or any Alpaca credent
 - Structured start-condition builder
 - Paper execution Edge Function and idempotent order submission
 - Alpaca order/fill synchronization
-- Bot runner scheduling and market-hours controls
+- Multi-leg option paper execution (stock paper execution is scheduled every five minutes)
 - Equity curve, P&L, drawdown, and comparison views
