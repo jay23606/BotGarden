@@ -10,6 +10,7 @@ let authMode = "signin";
 let bots = [];
 let backtestSummary = new Map();
 let latestBacktest = new Map();
+let currentView = "dashboard";
 
 if (!configured) $("#setup-banner").classList.remove("hidden");
 
@@ -101,6 +102,11 @@ async function loadDashboard() {
     <div class="section-head"><h3>Recent bots</h3></div>${renderBots()}`;
 }
 
+async function refreshWorkspace(view = currentView) {
+  await loadDashboard();
+  if (view !== "dashboard") switchView(view);
+}
+
 function actionIcon(name) {
   const paths = { details: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>`, test: `<path d="M4 19V9M10 19V4M16 19v-7M22 19H2"/>`, child: `<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.5 6H12a4 4 0 0 1 4 4v5.5M12 3v6M9 6h6"/>` };
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`;
@@ -134,7 +140,7 @@ async function toggleBot(botId) {
   const bot = bots.find((item) => item.id === botId); if (!bot) return;
   const next = bot.status === "active" ? "paused" : "active";
   const { error } = await supabase.from("bg_bots").update({ status: next, updated_at: new Date().toISOString() }).eq("id", botId);
-  if (!error) await loadDashboard();
+  if (!error) await refreshWorkspace();
 }
 
 function renderCrypto() {
@@ -162,7 +168,7 @@ async function showCryptoGridForm() {
 }
 
 async function deleteBot(botId, button) {
-  button.disabled = true; const { error } = await supabase.from("bg_bots").delete().eq("id", botId); if (error) { button.disabled = false; console.error("Bot removal failed", error); return; } await loadDashboard();
+  button.disabled = true; const { error } = await supabase.from("bg_bots").delete().eq("id", botId); if (error) { button.disabled = false; console.error("Bot removal failed", error); return; } await refreshWorkspace();
 }
 
 async function createRandomChild(botId, button) {
@@ -254,7 +260,7 @@ function showBacktestForm(botId) {
     try {
       const data = new FormData(event.currentTarget); const result = await invoke("backtest-bot", { botId, start: `${data.get("start")}T14:30:00Z`, end: `${data.get("end")}T21:00:00Z` });
       $("#backtest-result").innerHTML = `<div class="backtest-result"><div><span>Coverage</span><strong>${formatDuration(result.duration_seconds)}</strong></div><div><span>Signals</span><strong>${result.signal_count}</strong></div><div><span>${result.status === "signal_only" ? "Option P&L" : "Net P&L"}</span><strong>${result.status === "signal_only" ? "Not modeled" : money(result.net_pnl)}</strong></div><div><span>Bot return</span><strong>${result.return_pct == null ? "—" : pct(result.return_pct)}</strong></div><div><span>Market regime</span><strong>${escapeHtml(result.market_regime)}</strong></div><div><span>Market return</span><strong>${pct(result.market_return_pct)}</strong></div><div><span>Volatility</span><strong>${escapeHtml(result.volatility_label)}</strong></div><div><span>Trades</span><strong>${result.trade_count}</strong></div><div><span>Max drawdown</span><strong>${result.max_drawdown_pct == null ? "—" : pct(result.max_drawdown_pct)}</strong></div></div>${result.daily_regimes?.length ? `<div class="daily-regimes"><h3>Day-by-day context</h3>${result.daily_regimes.map((day) => `<div><span>${escapeHtml(day.date)}</span><strong>${escapeHtml(day.regime)}</strong><span>${escapeHtml(day.volatility)} volatility</span><span>${pct(day.return_pct)}</span></div>`).join("")}</div>` : ""}`;
-      button.textContent = "Run again"; button.disabled = false; await loadDashboard();
+      button.textContent = "Run again"; button.disabled = false; await refreshWorkspace();
     } catch (error) { $("#backtest-message").textContent = error.message || "Backtest failed"; button.textContent = "Run backtest"; button.disabled = false; }
   });
 }
@@ -267,6 +273,7 @@ async function loadActivity() {
 }
 
 function switchView(view) {
+  currentView = view;
   if (view !== "activity") { clearTimeout(activityTimer); activityTimer = null; }
   const cryptoMode = view === "crypto"; ["#prune-bots", "#random-ten", "#random-bot", "#stock-strategy", "#random-option-bot", "#new-bot"].forEach((selector) => $(selector)?.classList.toggle("hidden", cryptoMode));
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === view));
