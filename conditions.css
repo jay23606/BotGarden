@@ -21,6 +21,8 @@
 .random-stats div{padding:10px;background:white;border:1px solid var(--line);border-radius:9px}
 .random-stats span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
 .random-stats strong{display:block;margin-top:5px;font-size:12px}
+.randomized-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.randomized-list span{padding:6px 8px;border-radius:7px;background:#e8f1eb;color:#315748;font-size:11px}
 .row-actions{display:flex;gap:7px;justify-content:flex-end}
 .detail-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .detail-grid div,.backtest-result div{padding:13px;border:1px solid var(--line);border-radius:10px;background:#f8faf8}

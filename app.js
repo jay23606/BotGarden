@@ -108,7 +108,8 @@ async function showBotDetails(botId) {
     supabase.from("bg_option_spreads").select("*").eq("bot_id", bot.id).maybeSingle(),
   ]);
   const generatedValues = spread ? `<h3 class="detail-title">Generated spread settings</h3><div class="detail-grid"><div><span>Structure</span><strong>${escapeHtml(spread.spread_type.replaceAll("_", " "))}</strong></div><div><span>Expiration</span><strong>${spread.min_dte}–${spread.max_dte} DTE</strong></div><div><span>Short delta</span><strong>${Number(spread.short_delta_target).toFixed(2)}</strong></div><div><span>Width</span><strong>${money(spread.target_width)}</strong></div><div><span>Minimum credit</span><strong>${money(spread.minimum_credit)}</strong></div><div><span>Contracts</span><strong>${spread.contracts}</strong></div><div><span>Profit close</span><strong>${pct(spread.profit_close_pct)}</strong></div><div><span>Exit</span><strong>${spread.exit_dte} DTE</strong></div></div>` : steps?.length ? `<h3 class="detail-title">Generated order schedule</h3><table class="schedule"><thead><tr><th>Order</th><th>Deviation</th><th>Amount</th></tr></thead><tbody>${steps.map((step) => `<tr><td>${step.step_number ? `Averaging ${step.step_number}` : "Initial"}</td><td>-${pct(step.deviation_pct)}</td><td>${money(step.order_amount)}</td></tr>`).join("")}</tbody></table>` : "";
-  const generated = rule.generated_strategy ? `<div class="callout"><strong>Generated configuration</strong><br>Curated template: ${escapeHtml(rule.generated_strategy.replaceAll("_", " "))}. The generator selected the strategy; the values below came from that template and the risk choices in the popup.</div>` : "";
+  const randomizedAudit = Object.entries(rule.randomized_fields || {}).map(([key, value]) => `<span><b>${escapeHtml(key)}:</b> ${escapeHtml(value)}</span>`).join("");
+  const generated = rule.generated_strategy ? `<div class="callout"><strong>Generated configuration</strong><br>Curated template: ${escapeHtml(rule.generated_strategy.replaceAll("_", " "))}. Bounded random values are recorded below.${randomizedAudit ? `<div class="randomized-list">${randomizedAudit}</div>` : ""}</div>` : "";
   $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>${escapeHtml(bot.name)}</h3><p>${escapeHtml(bot.symbol)} · ${escapeHtml(bot.bot_type.replaceAll("_", " "))}</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body">${generated}<div class="detail-grid"><div><span>Maximum allocation</span><strong>${money(bot.max_allocation)}</strong></div><div><span>Take profit</span><strong>${bot.take_profit_pct ? pct(bot.take_profit_pct) : "Spread rule"}</strong></div><div><span>Stop loss</span><strong>${bot.stop_loss_pct ? pct(bot.stop_loss_pct) : "Defined by spread"}</strong></div><div><span>Session</span><strong>${escapeHtml(bot.session_policy)}</strong></div></div><h3 class="detail-title">Start rules (${escapeHtml(rule.operator || "AND")})</h3><div class="rule-list">${conditions.map((condition) => `<div><strong>${escapeHtml(conditionDefinition(condition.type)[1])}</strong><span>${escapeHtml(condition.timeframe || "")} · ${escapeHtml(Object.entries(condition.parameters || {}).map(([key, value]) => `${key}: ${value}`).join(", "))}</span></div>`).join("") || "No structured rules saved."}</div>${generatedValues}<div class="section-head"><h3>Backtest coverage</h3></div><div class="card">${formatDuration(backtestSummary.get(bot.id)?.seconds || 0)} across ${backtestSummary.get(bot.id)?.runs || 0} completed runs</div></div><div class="modal-foot"><button class="secondary" data-close-modal>Close</button><button class="primary" data-backtest="${bot.id}">Backtest</button></div>`;
   modal.showModal();
 }
@@ -277,6 +278,35 @@ const RANDOM_STRATEGIES = [
   },
 ];
 
+const pick = (values) => values[Math.floor(Math.random() * values.length)];
+const randomStep = (min, max, step) => Number((min + Math.floor(Math.random() * (Math.floor((max - min) / step) + 1)) * step).toFixed(4));
+
+function randomizeCondition(condition) {
+  const next = structuredClone(condition); const p = next.parameters; const changed = {};
+  if (next.type === "rsi") { p.period = pick([10, 12, 14, 16, 18]); p.value = p.operator === "below" ? randomStep(27, 38, 1) : randomStep(52, 68, 1); changed.RSI = `${p.period}-period at ${p.value}`; }
+  if (next.type === "moving_average") { const pair = pick([[5, 20], [8, 21], [9, 21], [10, 30], [12, 26], [20, 50]]); p.fast = pair[0]; p.slow = pair[1]; changed[`${p.average.toUpperCase()} pair`] = `${p.fast}/${p.slow}`; }
+  if (next.type === "relative_volume") { p.value = randomStep(1.2, 2.2, .05); p.lookback = pick([10, 15, 20, 30]); changed["Relative volume"] = `${p.value}× over ${p.lookback} bars`; }
+  if (next.type === "opening_range") { p.minutes = String(pick([5, 15, 30])); changed["Opening range"] = `${p.minutes} minutes`; }
+  if (next.type === "bollinger") { p.period = pick([18, 20, 22]); p.deviations = randomStep(1.8, 2.4, .1); changed["Bollinger Bands"] = `${p.period} periods / ${p.deviations}σ`; }
+  if (next.type === "atr") { p.period = pick([10, 14, 20]); p.value = randomStep(1.2, 2.5, .1); changed.ATR = `${p.period} periods / ${p.value}%`; }
+  if (next.type === "gap") { p.value = randomStep(1.25, 4, .25); changed.Gap = `${p.value}%`; }
+  return { condition: next, changed };
+}
+
+function randomizedStockStrategy(template) {
+  const next = structuredClone(template); const randomized = {};
+  next.conditions = template.conditions.map((condition) => { const result = randomizeCondition(condition); Object.assign(randomized, result.changed); return result.condition; });
+  next.steps = Math.max(1, Math.min(5, template.steps + pick([-1, 0, 0, 1])));
+  next.deviation = randomStep(Math.max(1, template.deviation - .6), template.deviation + .6, .1);
+  next.stepScale = randomStep(Math.max(1, template.stepScale - .1), Math.min(1.35, template.stepScale + .15), .05);
+  next.volumeScale = randomStep(Math.max(1, template.volumeScale - .1), Math.min(1.4, template.volumeScale + .15), .05);
+  next.takeProfit = randomStep(Math.max(1, template.takeProfit - .6), template.takeProfit + .7, .1);
+  next.stopLoss = randomStep(Math.max(5, template.stopLoss - 2), template.stopLoss + 2, 1);
+  Object.assign(randomized, { "Averaging orders": next.steps, "Initial deviation": `${next.deviation}%`, "Step scale": next.stepScale, "Volume scale": next.volumeScale, "Take profit": `${next.takeProfit}%`, "Stop loss": `${next.stopLoss}%` });
+  next.randomizedFields = randomized; next.generationId = crypto.randomUUID();
+  return next;
+}
+
 function randomSchedule(strategy, risk) {
   const weights = Array.from({ length: strategy.steps + 1 }, (_, index) => Math.pow(strategy.volumeScale, index));
   const initial = risk / weights.reduce((sum, weight) => sum + weight, 0);
@@ -298,9 +328,9 @@ function showRandomBotForm() {
   const roll = () => {
     const data = new FormData(form); const posture = data.get("posture"); const horizon = data.get("horizon");
     const candidates = RANDOM_STRATEGIES.filter((strategy) => strategy.posture.includes(posture) && strategy.horizon.includes(horizon) && strategy.id !== selected?.id);
-    selected = candidates[Math.floor(Math.random() * candidates.length)] || RANDOM_STRATEGIES[0];
+    selected = randomizedStockStrategy(candidates[Math.floor(Math.random() * candidates.length)] || RANDOM_STRATEGIES[0]);
     const risk = Number(data.get("risk")); const schedule = randomSchedule(selected, risk);
-    $("#random-preview").innerHTML = `<span class="eyebrow">CURATED STRATEGY</span><h3>${selected.name}</h3><p>${selected.description}</p><div class="random-stats"><div><span>Conditions</span><strong>${selected.conditions.length} joined with AND</strong></div><div><span>Orders</span><strong>${schedule.length}</strong></div><div><span>Take profit</span><strong>${pct(selected.takeProfit)}</strong></div><div><span>Stop loss</span><strong>${pct(selected.stopLoss)}</strong></div></div><div class="subtle">${selected.conditions.map((condition) => conditionDefinition(condition.type)[1]).join(" + ")}</div>`;
+    $("#random-preview").innerHTML = `<span class="eyebrow">CURATED + BOUNDED RANDOMIZATION</span><h3>${selected.name}</h3><p>${selected.description}</p><div class="random-stats"><div><span>Conditions</span><strong>${selected.conditions.length} joined with AND</strong></div><div><span>Orders</span><strong>${schedule.length}</strong></div><div><span>Take profit</span><strong>${pct(selected.takeProfit)}</strong></div><div><span>Stop loss</span><strong>${pct(selected.stopLoss)}</strong></div></div><div class="subtle">${selected.conditions.map((condition) => conditionDefinition(condition.type)[1]).join(" + ")}</div><div class="randomized-list">${Object.entries(selected.randomizedFields).map(([key, value]) => `<span><b>${escapeHtml(key)}:</b> ${escapeHtml(value)}</span>`).join("")}</div>`;
   };
   $("#reroll-bot").addEventListener("click", roll);
   form.querySelectorAll("select").forEach((field) => field.addEventListener("change", roll));
@@ -308,7 +338,7 @@ function showRandomBotForm() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.submitter; button.disabled = true;
     const data = new FormData(form); const risk = Number(data.get("risk")); const schedule = randomSchedule(selected, risk);
-    const payload = { user_id: session.user.id, name: `${data.get("symbol").toUpperCase().trim()} ${selected.name}`, bot_type: "dca", status: "draft", broker: "alpaca", environment: "paper", asset_class: data.get("assetClass"), symbol: data.get("symbol").toUpperCase().trim(), direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, sizing_mode: "fixed" }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: data.get("horizon") === "intraday" ? 1800 : 86400, session_policy: data.get("sessionPolicy") };
+    const payload = { user_id: session.user.id, name: `${data.get("symbol").toUpperCase().trim()} ${selected.name}`, bot_type: "dca", status: "draft", broker: "alpaca", environment: "paper", asset_class: data.get("assetClass"), symbol: data.get("symbol").toUpperCase().trim(), direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, sizing_mode: "fixed" }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: data.get("horizon") === "intraday" ? 1800 : 86400, session_policy: data.get("sessionPolicy") };
     const { data: bot, error } = await supabase.from("bg_bots").insert(payload).select().single();
     if (error) { $("#random-message").textContent = error.message; button.disabled = false; return; }
     const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
@@ -352,6 +382,16 @@ const OPTION_STRATEGIES = [
   },
 ];
 
+function randomizedOptionStrategy(template, posture) {
+  const next = structuredClone(template); const randomized = {};
+  next.conditions = template.conditions.map((condition) => { const result = randomizeCondition(condition); Object.assign(randomized, result.changed); return result.condition; });
+  const bands = { conservative: [0.15, 0.20], balanced: [0.21, 0.26], aggressive: [0.27, 0.32] };
+  const [minDelta, maxDelta] = bands[posture]; next.delta = randomStep(minDelta, maxDelta, .01);
+  next.lossCloseMultiple = randomStep(1.5, 2.5, .25); next.posture = posture; next.generationId = crypto.randomUUID();
+  Object.assign(randomized, { "Short-leg delta": next.delta, "Loss-close multiple": `${next.lossCloseMultiple}× credit` });
+  next.randomizedFields = randomized; return next;
+}
+
 function showRandomOptionBotForm() {
   $("#modal-content").innerHTML = `<form id="random-option-form"><div class="modal-head"><div><h3>Generate a random credit-spread bot</h3><p>Creates a defined-risk vertical spread with coherent entry and exit rules.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">Paper options require Alpaca Level 3. Maximum loss is estimated as spread width minus entry credit, multiplied by 100 and the number of spreads.</div><div class="form-grid"><label>Maximum risk ($)<input name="risk" type="number" min="100" max="100000" step="25" value="500" required></label><label>Underlying symbol<input name="symbol" value="SPY" maxlength="10" required></label><label>Market bias<select name="bias"><option value="either">Surprise me</option><option value="bullish">Bullish — put credit spread</option><option value="bearish">Bearish — call credit spread</option></select></label><label>Risk posture<select name="posture"><option value="conservative">Conservative</option><option value="balanced" selected>Balanced</option><option value="aggressive">Aggressive</option></select></label><label>Expiration window<select name="dte"><option value="30,45" selected>30–45 days</option><option value="21,35">21–35 days</option><option value="45,60">45–60 days</option></select></label><label>Spread width ($)<select name="width"><option value="2.5">$2.50</option><option value="5" selected>$5.00</option><option value="10">$10.00</option></select></label><label>Minimum entry credit ($)<input name="credit" type="number" min="0.05" step="0.05" value="1.00" required></label><label>Maximum bid/ask spread (%)<input name="maxSpread" type="number" min="1" max="100" step="1" value="15" required></label><label>Close profit at (%)<input name="profitClose" type="number" min="5" max="95" value="50" required></label><label>Exit before expiration (DTE)<input name="exitDte" type="number" min="0" max="30" value="7" required></label></div><div id="option-preview" class="random-preview"></div><p class="form-message" id="option-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="secondary" id="reroll-option">Try another</button><button class="primary" id="save-option" type="submit">Save this draft</button></div></form>`;
   modal.showModal();
@@ -359,14 +399,15 @@ function showRandomOptionBotForm() {
   const render = (reroll = false) => {
     const data = new FormData(form); const bias = data.get("bias");
     const candidates = OPTION_STRATEGIES.filter((strategy) => (bias === "either" || strategy.bias === bias) && (!reroll || strategy.id !== selected?.id));
-    if (!selected || reroll || (bias !== "either" && selected.bias !== bias)) selected = candidates[Math.floor(Math.random() * candidates.length)] || OPTION_STRATEGIES.find((strategy) => strategy.bias === bias) || OPTION_STRATEGIES[0];
+    const posture = data.get("posture");
+    if (!selected || reroll || selected.posture !== posture || (bias !== "either" && selected.bias !== bias)) selected = randomizedOptionStrategy(candidates[Math.floor(Math.random() * candidates.length)] || OPTION_STRATEGIES.find((strategy) => strategy.bias === bias) || OPTION_STRATEGIES[0], posture);
     const risk = Number(data.get("risk")); const width = Number(data.get("width")); const credit = Number(data.get("credit"));
     const riskPerSpread = Math.max(0, (width - credit) * 100); const contracts = riskPerSpread ? Math.floor(risk / riskPerSpread) : 0; const totalRisk = contracts * riskPerSpread;
-    const posture = data.get("posture"); const delta = posture === "conservative" ? 0.18 : posture === "aggressive" ? 0.30 : 0.23;
+    const delta = selected.delta;
     const valid = credit < width && contracts >= 1;
     $("#save-option").disabled = !valid;
     $("#option-message").textContent = valid ? "" : credit >= width ? "Minimum credit must be less than the spread width." : `This budget is below the estimated ${money(riskPerSpread)} risk of one spread. Increase the budget, increase credit, or reduce width.`;
-    $("#option-preview").innerHTML = `<span class="eyebrow">DEFINED-RISK STRATEGY</span><h3>${selected.name}</h3><p>${selected.description}</p><div class="random-stats"><div><span>Target short delta</span><strong>${delta.toFixed(2)}</strong></div><div><span>Contracts</span><strong>${contracts || "—"}</strong></div><div><span>Estimated max loss</span><strong>${valid ? money(totalRisk) : "—"}</strong></div><div><span>Maximum profit</span><strong>${valid ? money(contracts * credit * 100) : "—"}</strong></div></div><div class="subtle">${selected.spreadType === "bull_put_credit" ? "Sell higher-strike put + buy lower-strike put" : "Sell lower-strike call + buy higher-strike call"} · ${selected.conditions.map((condition) => conditionDefinition(condition.type)[1]).join(" + ")}</div>`;
+    $("#option-preview").innerHTML = `<span class="eyebrow">DEFINED RISK + BOUNDED RANDOMIZATION</span><h3>${selected.name}</h3><p>${selected.description}</p><div class="random-stats"><div><span>Target short delta</span><strong>${delta.toFixed(2)}</strong></div><div><span>Contracts</span><strong>${contracts || "—"}</strong></div><div><span>Estimated max loss</span><strong>${valid ? money(totalRisk) : "—"}</strong></div><div><span>Maximum profit</span><strong>${valid ? money(contracts * credit * 100) : "—"}</strong></div></div><div class="subtle">${selected.spreadType === "bull_put_credit" ? "Sell higher-strike put + buy lower-strike put" : "Sell lower-strike call + buy higher-strike call"} · ${selected.conditions.map((condition) => conditionDefinition(condition.type)[1]).join(" + ")}</div><div class="randomized-list">${Object.entries(selected.randomizedFields).map(([key, value]) => `<span><b>${escapeHtml(key)}:</b> ${escapeHtml(value)}</span>`).join("")}</div>`;
     return { risk, width, credit, contracts, totalRisk, delta };
   };
   $("#reroll-option").addEventListener("click", () => render(true));
@@ -374,10 +415,10 @@ function showRandomOptionBotForm() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.submitter; button.disabled = true; const values = render(false); const data = new FormData(form);
     const [minDte, maxDte] = String(data.get("dte")).split(",").map(Number); const symbol = String(data.get("symbol")).toUpperCase().trim();
-    const payload = { user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "credit_spread", status: "draft", broker: "alpaca", environment: "paper", asset_class: "option", symbol, direction: selected.bias === "bullish" ? "long" : "short", max_allocation: values.totalRisk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id }, take_profit_pct: Number(data.get("profitClose")), stop_loss_pct: null, cooldown_seconds: 86400, session_policy: "regular" };
+    const payload = { user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "credit_spread", status: "draft", broker: "alpaca", environment: "paper", asset_class: "option", symbol, direction: selected.bias === "bullish" ? "long" : "short", max_allocation: values.totalRisk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields }, take_profit_pct: Number(data.get("profitClose")), stop_loss_pct: null, cooldown_seconds: 86400, session_policy: "regular" };
     const { data: bot, error } = await supabase.from("bg_bots").insert(payload).select().single();
     if (error) { $("#option-message").textContent = error.message; button.disabled = false; return; }
-    const { error: spreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: bot.id, spread_type: selected.spreadType, min_dte: minDte, max_dte: maxDte, short_delta_target: values.delta, target_width: values.width, minimum_credit: values.credit, max_bid_ask_pct: Number(data.get("maxSpread")), contracts: values.contracts, max_risk: values.totalRisk, profit_close_pct: Number(data.get("profitClose")), loss_close_multiple: 2, exit_dte: Number(data.get("exitDte")) });
+    const { error: spreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: bot.id, spread_type: selected.spreadType, min_dte: minDte, max_dte: maxDte, short_delta_target: values.delta, target_width: values.width, minimum_credit: values.credit, max_bid_ask_pct: Number(data.get("maxSpread")), contracts: values.contracts, max_risk: values.totalRisk, profit_close_pct: Number(data.get("profitClose")), loss_close_multiple: selected.lossCloseMultiple, exit_dte: Number(data.get("exitDte")) });
     if (spreadError) { await supabase.from("bg_bots").delete().eq("id", bot.id); $("#option-message").textContent = spreadError.message; button.disabled = false; return; }
     modal.close(); await loadDashboard();
   });
