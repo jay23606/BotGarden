@@ -53,6 +53,7 @@ $("#sign-out").addEventListener("click", () => supabase?.auth.signOut());
 $("#new-bot").addEventListener("click", showBotForm);
 $("#random-bot").addEventListener("click", showRandomBotForm);
 $("#random-option-bot").addEventListener("click", showRandomOptionBotForm);
+$("#random-ten").addEventListener("click", showBulkRandomForm);
 document.addEventListener("click", (event) => {
   const nav = event.target.closest("[data-view]");
   if (nav) switchView(nav.dataset.view);
@@ -336,6 +337,16 @@ function randomSchedule(strategy, risk) {
   });
 }
 
+async function autoBacktestTwoMonths(botId) {
+  const end = new Date(); end.setUTCDate(end.getUTCDate() - 1); end.setUTCHours(21, 0, 0, 0);
+  const middle = new Date(end); middle.setUTCDate(middle.getUTCDate() - 30);
+  const start = new Date(middle); start.setUTCDate(start.getUTCDate() - 30);
+  const ranges = [[start, middle], [middle, end]];
+  const results = [];
+  for (const [rangeStart, rangeEnd] of ranges) results.push(await invoke("backtest-bot", { botId, start: rangeStart.toISOString(), end: rangeEnd.toISOString() }));
+  return results;
+}
+
 function showRandomBotForm() {
   $("#modal-content").innerHTML = `<form id="random-bot-form"><div class="modal-head"><div><h3>Generate a sensible random bot</h3><p>BotGarden chooses from vetted strategy structures and keeps every order inside your risk budget.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">This creates a draft for paper trading. “Risk budget” is the maximum planned capital allocation, not a guarantee of maximum loss.</div><div class="form-grid"><label>Maximum allocation ($)<input name="risk" type="number" min="50" max="100000" step="10" value="500" required></label><label>Symbol<input name="symbol" value="SPY" maxlength="20" required></label><label>Asset class<select name="assetClass"><option value="equity">Stocks</option><option value="option">Stock options</option></select></label><label>Risk posture<select name="posture"><option value="conservative">Conservative</option><option value="balanced" selected>Balanced</option><option value="aggressive">Aggressive</option></select></label><label>Time horizon<select name="horizon"><option value="intraday" selected>Intraday</option><option value="swing">Swing</option></select></label><label>Trading session<select name="sessionPolicy"><option value="regular">Regular hours only</option><option value="extended">Include extended hours</option></select></label></div><div id="random-preview" class="random-preview"></div><p class="form-message" id="random-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="secondary" id="reroll-bot">Try another</button><button class="primary" type="submit">Save this draft</button></div></form>`;
   modal.showModal();
@@ -362,6 +373,8 @@ function showRandomBotForm() {
     if (error) { $("#random-message").textContent = error.message; button.disabled = false; return; }
     const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
     if (stepError) { $("#random-message").textContent = stepError.message; button.disabled = false; return; }
+    button.textContent = "Backtesting 2 months…";
+    try { await autoBacktestTwoMonths(bot.id); } catch (error) { console.warn("Automatic backtest failed", error); }
     modal.close(); await loadDashboard();
   });
 }
@@ -439,7 +452,49 @@ function showRandomOptionBotForm() {
     if (error) { $("#option-message").textContent = error.message; button.disabled = false; return; }
     const { error: spreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: bot.id, spread_type: selected.spreadType, min_dte: minDte, max_dte: maxDte, short_delta_target: values.delta, target_width: values.width, minimum_credit: values.credit, max_bid_ask_pct: Number(data.get("maxSpread")), contracts: values.contracts, max_risk: values.totalRisk, profit_close_pct: Number(data.get("profitClose")), loss_close_multiple: selected.lossCloseMultiple, exit_dte: Number(data.get("exitDte")) });
     if (spreadError) { await supabase.from("bg_bots").delete().eq("id", bot.id); $("#option-message").textContent = spreadError.message; button.disabled = false; return; }
+    button.textContent = "Backtesting 2 months…";
+    try { await autoBacktestTwoMonths(bot.id); } catch (error) { console.warn("Automatic backtest failed", error); }
     modal.close(); await loadDashboard();
+  });
+}
+
+async function createBulkStockBot() {
+  const candidates = RANDOM_STRATEGIES.filter((strategy) => strategy.posture.includes("balanced") && strategy.horizon.includes("intraday"));
+  const selected = randomizedStockStrategy(pick(candidates)); const risk = 500; const schedule = randomSchedule(selected, risk); const symbol = "SPY";
+  const { data: bot, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: "equity", symbol, direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, sizing_mode: "fixed", bulk_generated: true }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: 1800, session_policy: "regular" }).select().single();
+  if (error) throw error;
+  const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
+  if (stepError) { await supabase.from("bg_bots").delete().eq("id", bot.id); throw stepError; }
+  return bot;
+}
+
+async function createBulkOptionBot(index) {
+  const bias = index % 2 ? "bearish" : "bullish"; const selected = randomizedOptionStrategy(pick(OPTION_STRATEGIES.filter((strategy) => strategy.bias === bias)), "balanced");
+  const risk = 500, width = 5, credit = 1, riskPerSpread = (width - credit) * 100, contracts = Math.max(1, Math.floor(risk / riskPerSpread)), totalRisk = contracts * riskPerSpread, symbol = "SPY";
+  const { data: bot, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "credit_spread", status: "active", broker: "alpaca", environment: "paper", asset_class: "option", symbol, direction: bias === "bullish" ? "long" : "short", max_allocation: totalRisk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, bulk_generated: true }, take_profit_pct: 50, stop_loss_pct: null, cooldown_seconds: 86400, session_policy: "regular" }).select().single();
+  if (error) throw error;
+  const { error: spreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: bot.id, spread_type: selected.spreadType, min_dte: 30, max_dte: 45, short_delta_target: selected.delta, target_width: width, minimum_credit: credit, max_bid_ask_pct: 15, contracts, max_risk: totalRisk, profit_close_pct: 50, loss_close_multiple: selected.lossCloseMultiple, exit_dte: 7 });
+  if (spreadError) { await supabase.from("bg_bots").delete().eq("id", bot.id); throw spreadError; }
+  return bot;
+}
+
+function showBulkRandomForm() {
+  $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Create 10 random bots</h3><p>Five stock bots and five credit-spread bots, each automatically tested across the previous 60 days.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">Defaults: SPY, balanced risk, $500 stock allocation, up to $500 option risk, regular hours, and ON. This runs 20 historical test segments and may take a minute.</div><div class="bulk-summary"><div><strong>5</strong><span>Random stock bots</span></div><div><strong>5</strong><span>Random option bots</span></div><div><strong>60d</strong><span>Automatic coverage each</span></div></div><div id="bulk-progress" class="bulk-progress"><span></span><strong>Ready to create</strong></div><p class="form-message" id="bulk-message"></p></div><div class="modal-foot"><button class="secondary" data-close-modal>Cancel</button><button class="primary" id="confirm-bulk">Create and backtest 10</button></div>`;
+  modal.showModal();
+  $("#confirm-bulk").addEventListener("click", async (event) => {
+    const button = event.currentTarget; button.disabled = true; let completed = 0, failures = 0;
+    const update = (message) => { const progress = completed / 10 * 100; $("#bulk-progress span").style.width = `${progress}%`; $("#bulk-progress strong").textContent = message; };
+    for (let index = 0; index < 10; index++) {
+      try {
+        update(`Creating ${index < 5 ? "stock" : "option"} bot ${index + 1} of 10…`);
+        const bot = index < 5 ? await createBulkStockBot() : await createBulkOptionBot(index - 5);
+        update(`Backtesting ${bot.name}…`); await autoBacktestTwoMonths(bot.id);
+      } catch (error) { failures++; console.warn("Bulk bot creation failed", error); }
+      completed++; update(`${completed} of 10 complete`);
+    }
+    await loadDashboard();
+    if (failures) { $("#bulk-message").textContent = `${10 - failures} bots completed; ${failures} failed. Close this window and retry to add replacements.`; button.textContent = "Completed with warnings"; button.disabled = true; }
+    else { modal.close(); }
   });
 }
 

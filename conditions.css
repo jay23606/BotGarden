@@ -33,6 +33,12 @@
 .danger-button{border:0;border-radius:10px;background:var(--danger);color:white;padding:11px 17px;font-weight:700}
 .delete-warning{padding:16px;border:1px solid #efd4d4;border-radius:10px;background:#fff7f7;color:#7c2929;font-size:13px}
 .runner-note{max-width:650px;margin-top:9px;padding:10px 13px;border-radius:9px;background:#fff4d7;color:#6d5416;font-size:11px}
+.bulk-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}
+.bulk-summary div{padding:15px;border:1px solid var(--line);border-radius:10px;background:#f8faf8;text-align:center}
+.bulk-summary strong{display:block;font:700 24px Manrope,sans-serif}.bulk-summary span{display:block;margin-top:4px;color:var(--muted);font-size:11px}
+.bulk-progress{position:relative;overflow:hidden;height:40px;border-radius:9px;background:#edf1ee;display:grid;place-items:center}
+.bulk-progress span{position:absolute;left:0;top:0;bottom:0;width:0;background:#cfe7d7;transition:width .25s}
+.bulk-progress strong{position:relative;z-index:1;font-size:12px}
 .detail-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .detail-grid div,.backtest-result div{padding:13px;border:1px solid var(--line);border-radius:10px;background:#f8faf8}
 .detail-grid span,.backtest-result span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
