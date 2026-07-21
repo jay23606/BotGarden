@@ -45,5 +45,5 @@ Never commit the generated key, Supabase service-role key, or any Alpaca credent
 - Structured start-condition builder
 - Paper execution Edge Function and idempotent order submission
 - Alpaca order/fill synchronization
-- Automated option exit management (stock and option entries are scheduled every five minutes)
+- Broker fill reconciliation and richer live position analytics
 - Equity curve, P&L, drawdown, and comparison views
