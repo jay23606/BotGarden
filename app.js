@@ -352,9 +352,29 @@ function randomizeCondition(condition) {
   return { condition: next, changed };
 }
 
+function varyConditionCount(conditions, bias, randomized) {
+  const roll = Math.random(), target = roll < .15 ? 1 : roll < .75 ? 2 : 3;
+  const confirmationTypes = new Set(["relative_volume", "vwap", "atr"]), primary = conditions.find((condition) => !confirmationTypes.has(condition.type)) || conditions[0];
+  let selected = target === 1 ? [primary] : conditions.length > target ? [primary, ...conditions.filter((condition) => condition !== primary).sort(() => Math.random() - .5).slice(0, target - 1)] : [...conditions];
+  const timeframe = primary?.timeframe || "15Min", additions = [
+    { type: "relative_volume", timeframe, parameters: { operator: "above", value: 1.2, lookback: 20 } },
+    { type: "moving_average", timeframe, parameters: { average: "ema", fast: 9, slow: 21, operator: bias === "bearish" ? "below" : "above" } },
+    { type: "rsi", timeframe, parameters: { period: 14, operator: bias === "bearish" ? "below" : "above", value: bias === "bearish" ? 48 : 52 } },
+  ];
+  for (const addition of additions) {
+    if (selected.length >= target) break;
+    if (selected.some((condition) => condition.type === addition.type)) continue;
+    const result = randomizeCondition(addition); selected.push(result.condition); Object.assign(randomized, result.changed);
+  }
+  randomized["Start-condition count"] = selected.length;
+  randomized["Signal strictness"] = selected.length === 1 ? "single signal" : selected.length === 2 ? "signal + confirmation" : "strict confirmation";
+  return selected;
+}
+
 function randomizedStockStrategy(template, posture = "balanced", horizon = "intraday", symbol = "SPY") {
   const next = structuredClone(template); const randomized = {};
   next.conditions = template.conditions.map((condition) => { const result = randomizeCondition(condition); Object.assign(randomized, result.changed); return result.condition; });
+  next.conditions = varyConditionCount(next.conditions, "bullish", randomized);
   const profiles = { conservative: { steps: [1, 2], volume: [1, 1.08], atr: [.8, 1.6], reward: [1, 1.35], stop: [1.4, 1.8] }, balanced: { steps: [1, 3], volume: [1, 1.15], atr: [1, 2.1], reward: [1.15, 1.65], stop: [1.5, 2] }, aggressive: { steps: [1, 3], volume: [1, 1.2], atr: [1.3, 2.8], reward: [1.3, 2], stop: [1.6, 2.2] } };
   const profile = profiles[posture] || profiles.balanced, liquidEtf = ["SPY","QQQ","IWM","DIA","XLF","XLK","XLE","TLT","GLD","SLV","EEM","HYG"].includes(String(symbol).toUpperCase());
   const atrPct = randomStep(profile.atr[0], profile.atr[1] + (liquidEtf ? 0 : .4), .1), rewardMultiple = randomStep(profile.reward[0], profile.reward[1], .05), stopMultiple = randomStep(profile.stop[0], profile.stop[1], .05);
@@ -488,6 +508,7 @@ const OPTION_STRATEGIES = [
 function randomizedOptionStrategy(template, posture) {
   const next = structuredClone(template); const randomized = {};
   next.conditions = template.conditions.map((condition) => { const result = randomizeCondition(condition); Object.assign(randomized, result.changed); return result.condition; });
+  next.conditions = varyConditionCount(next.conditions, template.bias, randomized);
   const bands = { conservative: [0.10, 0.15], balanced: [0.14, 0.20], aggressive: [0.20, 0.26] };
   const [minDelta, maxDelta] = bands[posture]; next.delta = randomStep(minDelta, maxDelta, .01);
   next.lossCloseMultiple = randomStep(1.5, 2.0, .25); next.posture = posture; next.generationId = crypto.randomUUID();
