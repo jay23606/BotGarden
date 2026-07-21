@@ -48,6 +48,18 @@ function prepareCache(bars: Bar[], conditions: any[]) {
   return cache;
 }
 
+function classifyMarket(bars: Bar[]) {
+  if (bars.length < 2) return { regime: "Insufficient data", returnPct: 0, volatility: "Unknown" };
+  const returnPct = (bars.at(-1)!.c / bars[0].o - 1) * 100;
+  const path = bars.slice(1).reduce((sum, bar, index) => sum + Math.abs(bar.c - bars[index].c), 0);
+  const efficiency = path ? Math.abs(bars.at(-1)!.c - bars[0].o) / path : 0;
+  const averageRangePct = avg(bars.map((bar) => (bar.h - bar.l) / bar.c * 100));
+  const volatility = averageRangePct < .2 ? "Low" : averageRangePct < .5 ? "Moderate" : "High";
+  const direction = returnPct > .5 ? "Bullish" : returnPct < -.5 ? "Bearish" : "Sideways";
+  const regime = direction === "Sideways" && efficiency < .25 ? "Range-bound" : efficiency > .35 ? `${direction} trending` : `${direction} choppy`;
+  return { regime, returnPct, volatility };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: cors });
   let backtestId: string | null = null; let admin: any = null;
@@ -92,8 +104,11 @@ Deno.serve(async (request) => {
     }
     if (!signalOnly && position) { const bar = bars[bars.length - 1], average = position.cost / position.qty, proceeds = position.qty * bar.c, pnl = proceeds - position.cost; cash += proceeds; trades.push({ backtest_id: backtestId, user_id: user.id, entry_at: position.entryAt, exit_at: bar.t, entry_price: average, exit_price: bar.c, quantity: position.qty, pnl, exit_reason: "end_of_test" }); }
     if (trades.length) await admin.from("bg_backtest_trades").insert(trades);
+    const testBars = bars.filter((bar) => new Date(bar.t) >= startAt); const market = classifyMarket(testBars);
+    const days = new Map<string, Bar[]>(); testBars.forEach((bar) => { const date = bar.t.slice(0, 10); days.set(date, [...(days.get(date) || []), bar]); });
+    const dailyRegimes = [...days.entries()].map(([date, dayBars]) => { const summary = classifyMarket(dayBars); return { date, regime: summary.regime, return_pct: summary.returnPct, volatility: summary.volatility }; });
     const pnl = signalOnly ? null : cash - Number(bot.max_allocation); const wins = trades.filter((trade) => trade.pnl > 0).length;
-    const result = { status: signalOnly ? "signal_only" : "completed", ending_capital: signalOnly ? null : cash, net_pnl: pnl, return_pct: signalOnly ? null : pnl / Number(bot.max_allocation) * 100, max_drawdown_pct: signalOnly ? null : maxDrawdown, trade_count: trades.length, win_count: wins, loss_count: trades.length - wins, signal_count: signals, completed_at: new Date().toISOString() };
+    const result = { status: signalOnly ? "signal_only" : "completed", ending_capital: signalOnly ? null : cash, net_pnl: pnl, return_pct: signalOnly ? null : pnl / Number(bot.max_allocation) * 100, max_drawdown_pct: signalOnly ? null : maxDrawdown, trade_count: trades.length, win_count: wins, loss_count: trades.length - wins, signal_count: signals, market_regime: market.regime, market_return_pct: market.returnPct, volatility_label: market.volatility, daily_regimes: dailyRegimes, completed_at: new Date().toISOString() };
     await admin.from("bg_backtests").update(result).eq("id", backtestId); return respond({ id: backtestId, ...result, duration_seconds: duration });
   } catch (error) {
     if (admin && backtestId) await admin.from("bg_backtests").update({ status: "failed", error_message: error instanceof Error ? error.message : "Backtest failed", completed_at: new Date().toISOString() }).eq("id", backtestId);
