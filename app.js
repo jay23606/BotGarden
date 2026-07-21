@@ -552,26 +552,25 @@ async function createBulkOptionBot(index, symbols) {
 }
 
 function showBulkRandomForm() {
-  $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Create 10 random bots</h3><p>Five stock bots and five mixed option strategies, each automatically tested across the previous 60 days.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">The option mix includes two credit spreads, two debit spreads, and one long call or put. Defaults: SPY, balanced risk, up to $500 risk, regular hours, and ON.</div><div class="bulk-summary"><div><strong>5</strong><span>Random stock bots</span></div><div><strong>5</strong><span>Mixed option strategies</span></div><div><strong>60d</strong><span>Automatic coverage each</span></div></div><div id="bulk-progress" class="bulk-progress"><span></span><strong>Ready to create</strong></div><p class="form-message" id="bulk-message"></p></div><div class="modal-foot"><button class="secondary" data-close-modal>Cancel</button><button class="primary" id="confirm-bulk">Create and test 10</button></div>`;
+  const stockCount = 15, optionCount = 10, totalCount = stockCount + optionCount;
+  $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Create ${totalCount} random bots</h3><p>${stockCount} stock bots and ${optionCount} mixed option strategies, each tested for your selected number of market days.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">Each bot gets a random liquid ticker. The safer option mix favors defined-risk credit spreads, with some debit spreads and long options, and up to $500 risk per bot.</div><div class="bulk-summary"><div><strong>${stockCount}</strong><span>Random stock bots</span></div><div><strong>${optionCount}</strong><span>Mixed option strategies</span></div><div><strong>5d</strong><span>Automatic coverage each</span></div></div><div id="bulk-progress" class="bulk-progress"><span></span><strong>Ready to create</strong></div><p class="form-message" id="bulk-message"></p></div><div class="modal-foot"><button class="secondary" data-close-modal>Cancel</button><button class="primary" id="confirm-bulk">Create and test ${totalCount}</button></div>`;
   modal.showModal();
-  $("#modal-content .modal-head p").textContent = "Five stock bots and five mixed option strategies, each tested for your selected number of market days.";
-  $("#modal-content .callout").textContent = "Each bot gets a random liquid ticker. The safer option mix includes three defined-risk credit spreads, one debit spread, and one long option, with up to $500 risk per bot.";
   $(".bulk-summary").insertAdjacentHTML("afterend", `<label class="bulk-days">Backtest market days per bot<input id="bulk-backtest-days" type="number" min="1" max="60" value="5" required></label>`);
   const coverageValue = $(".bulk-summary div:nth-child(3) strong"); coverageValue.textContent = "5d"; $("#bulk-backtest-days").addEventListener("input", (event) => coverageValue.textContent = `${event.target.value || 5}d`);
   $("#confirm-bulk").addEventListener("click", async (event) => {
     const button = event.currentTarget; button.disabled = true; let completed = 0, failures = 0;
     let universe; try { universe = await getLiquidUniverse(); } catch (error) { universe = { symbols: ["SPY"], optionSymbols: ["SPY"] }; }
-    const update = (message) => { const progress = completed / 10 * 100; $("#bulk-progress span").style.width = `${progress}%`; $("#bulk-progress strong").textContent = message; };
-    for (let index = 0; index < 10; index++) {
+    const update = (message) => { const progress = completed / totalCount * 100; $("#bulk-progress span").style.width = `${progress}%`; $("#bulk-progress strong").textContent = message; };
+    for (let index = 0; index < totalCount; index++) {
       try {
-        update(`Creating ${index < 5 ? "stock" : "option"} bot ${index + 1} of 10…`);
-        const bot = index < 5 ? await createBulkStockBot(universe.symbols) : await createBulkOptionBot(index - 5, universe.optionSymbols?.length ? universe.optionSymbols : ["SPY"]);
+        update(`Creating ${index < stockCount ? "stock" : "option"} bot ${index + 1} of ${totalCount}…`);
+        const bot = index < stockCount ? await createBulkStockBot(universe.symbols) : await createBulkOptionBot(index - stockCount, universe.optionSymbols?.length ? universe.optionSymbols : ["SPY"]);
         update(`Backtesting ${bot.name}…`); await autoBacktest(bot.id, Number($("#bulk-backtest-days").value));
       } catch (error) { failures++; console.warn("Bulk bot creation failed", error); }
-      completed++; update(`${completed} of 10 complete`);
+      completed++; update(`${completed} of ${totalCount} complete`);
     }
     await loadDashboard();
-    if (failures) { $("#bulk-message").textContent = `${10 - failures} bots completed; ${failures} failed. Close this window and retry to add replacements.`; button.textContent = "Completed with warnings"; button.disabled = true; }
+    if (failures) { $("#bulk-message").textContent = `${totalCount - failures} bots completed; ${failures} failed. Close this window and retry to add replacements.`; button.textContent = "Completed with warnings"; button.disabled = true; }
     else { modal.close(); }
   });
 }
