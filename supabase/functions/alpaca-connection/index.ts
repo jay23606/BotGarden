@@ -47,6 +47,12 @@ Deno.serve(async (request) => {
     if (authError || !user) return json({ error: "Invalid session" }, 401);
 
     const body = await request.json();
+    if (body.action === "status") {
+      const { data: connections, error } = await admin.from("bg_broker_connections").select("id,broker,environment,account_number,status,last_verified_at,updated_at").eq("user_id", user.id).eq("broker", "alpaca").eq("environment", "paper").order("updated_at", { ascending: false }).limit(1); if (error) throw error;
+      const connection = connections?.[0]; if (!connection) return json({ connected: false, saved: false });
+      const { data: credential } = await admin.from("bg_broker_credentials").select("connection_id,updated_at").eq("connection_id", connection.id).maybeSingle();
+      return json({ connected: connection.status === "connected" && !!credential, saved: !!credential, connection });
+    }
     if (body.action !== "connect") return json({ error: "Unsupported action" }, 400);
     const apiKey = String(body.apiKey || "").trim();
     const apiSecret = String(body.apiSecret || "").trim();

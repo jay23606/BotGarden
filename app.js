@@ -77,8 +77,8 @@ document.addEventListener("click", (event) => {
 });
 
 async function getConnection() {
-  const { data } = await supabase.from("bg_broker_connections").select("id,broker,environment,account_number,status,last_verified_at").eq("broker", "alpaca").maybeSingle();
-  return data;
+  try { const result = await invoke("alpaca-connection", { action: "status" }); return result.connected ? result.connection : null; }
+  catch (error) { console.warn("Unable to read saved Alpaca connection status", error); return null; }
 }
 
 async function loadDashboard() {
@@ -101,7 +101,7 @@ async function loadDashboard() {
       <div class="card metric"><span class="label">TOTAL P&L</span><strong>${money(0)}</strong><div class="subtle">Paper performance</div></div>
     </div>
     <div class="section-head"><h3>Alpaca paper account</h3></div>
-    <div class="card connection-card"><div class="connection-state"><div><span class="connection-dot ${connection?.status === "connected" ? "on" : ""}"></span><strong>${connection ? "Alpaca connected" : "Not connected"}</strong><div class="subtle">${connection ? `Paper account ${escapeHtml(connection.account_number || "")}` : "Add your own Alpaca paper API credentials."}</div></div><button class="secondary" data-connect>${connection ? "Reconnect" : "Connect account"}</button></div></div>
+    <div class="card connection-card"><div class="connection-state"><div><span class="connection-dot ${connection?.status === "connected" ? "on" : ""}"></span><strong>${connection ? "Alpaca connected · keys saved" : "Not connected"}</strong><div class="subtle">${connection ? `Paper account ${escapeHtml(connection.account_number || "")} · encrypted credentials are remembered by BotGarden${connection.last_verified_at ? ` · verified ${new Date(connection.last_verified_at).toLocaleString()}` : ""}` : "Add your own Alpaca paper API credentials once."}</div></div><button class="secondary" data-connect>${connection ? "Replace saved keys" : "Connect account"}</button></div></div>
     <div class="runner-note"><strong>Paper execution worker active.</strong> ON stock and option bots are evaluated every five minutes and may submit Alpaca paper orders when every start condition, risk, liquidity, and position check passes.</div>
     <div class="section-head"><h3>Recent bots</h3></div>${renderBots()}`;
 }
