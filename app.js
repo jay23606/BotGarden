@@ -338,14 +338,9 @@ function randomSchedule(strategy, risk) {
   });
 }
 
-async function autoBacktestTwoMonths(botId) {
-  const end = new Date(); end.setUTCDate(end.getUTCDate() - 1); end.setUTCHours(21, 0, 0, 0);
-  const middle = new Date(end); middle.setUTCDate(middle.getUTCDate() - 30);
-  const start = new Date(middle); start.setUTCDate(start.getUTCDate() - 30);
-  const ranges = [[start, middle], [middle, end]];
-  const results = [];
-  for (const [rangeStart, rangeEnd] of ranges) results.push(await invoke("backtest-bot", { botId, start: rangeStart.toISOString(), end: rangeEnd.toISOString() }));
-  return results;
+async function autoBacktest(botId, marketDays = 5) {
+  const end = new Date(); end.setUTCDate(end.getUTCDate() - 1); end.setUTCHours(23, 59, 0, 0); const start = new Date(end); start.setUTCDate(start.getUTCDate() - Math.ceil(Number(marketDays) * 1.6 + 10));
+  return invoke("backtest-bot", { botId, start: start.toISOString(), end: end.toISOString(), marketDays: Number(marketDays) });
 }
 
 async function showRandomBotForm() {
@@ -354,6 +349,7 @@ async function showRandomBotForm() {
   modal.showModal();
   const form = $("#random-bot-form");
   form.elements.symbol.value = pick(universe.symbols);
+  form.querySelector(".form-grid").insertAdjacentHTML("beforeend", `<label>Backtest market days<input name="backtestDays" type="number" min="1" max="60" value="5" required></label>`);
   const randomOptionChoice = form.querySelector('[name="assetClass"] option[value="option"]');
   randomOptionChoice.disabled = true;
   randomOptionChoice.textContent = "Stock options — contract selector coming next";
@@ -376,8 +372,8 @@ async function showRandomBotForm() {
     if (error) { $("#random-message").textContent = error.message; button.disabled = false; return; }
     const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
     if (stepError) { $("#random-message").textContent = stepError.message; button.disabled = false; return; }
-    button.textContent = "Backtesting 2 months…";
-    try { await autoBacktestTwoMonths(bot.id); } catch (error) { console.warn("Automatic backtest failed", error); }
+    button.textContent = `Backtesting ${data.get("backtestDays")} market days…`;
+    try { await autoBacktest(bot.id, data.get("backtestDays")); } catch (error) { console.warn("Automatic backtest failed", error); }
     modal.close(); await loadDashboard();
   });
 }
@@ -463,7 +459,7 @@ async function showRandomOptionBotForm() {
   let universe; try { universe = await getLiquidUniverse(); } catch (error) { console.warn(error); universe = { optionSymbols: ["SPY"] }; }
   $("#modal-content").innerHTML = `<form id="random-option-form"><div class="modal-head"><div><h3>Generate a random option strategy</h3><p>Choose a strategy family, then get coherent randomized entry and exit rules.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">Historical tests measure underlying entry signals and market context; they do not estimate option P&amp;L.</div><div class="form-grid"><label>Strategy family<select name="strategyFamily"><option value="credit_spread" selected>Credit spread (default)</option><option value="debit_spread">Debit spread</option><option value="long_option">Long call or put</option></select></label><label>Maximum risk ($)<input name="risk" type="number" min="25" max="100000" step="25" value="500" required></label><label>Underlying symbol<input name="symbol" value="SPY" maxlength="10" required></label><label>Market bias<select name="bias"><option value="either">Surprise me</option><option value="bullish">Bullish</option><option value="bearish">Bearish</option></select></label><label>Risk posture<select name="posture"><option value="conservative">Conservative</option><option value="balanced" selected>Balanced</option><option value="aggressive">Aggressive</option></select></label><label>Expiration window<select name="dte"><option value="30,45" selected>30–45 days</option><option value="21,35">21–35 days</option><option value="45,60">45–60 days</option></select></label><label id="option-width-label">Spread width ($)<select name="width"><option value="2.5">$2.50</option><option value="5" selected>$5.00</option><option value="10">$10.00</option></select></label><label><span id="option-premium-label">Minimum entry credit ($)</span><input name="premium" type="number" min="0.05" step="0.05" value="1.00" required></label><label>Maximum bid/ask spread (%)<input name="maxSpread" type="number" min="1" max="100" step="1" value="15" required></label><label>Close profit at (%)<input name="profitClose" type="number" min="5" max="95" value="50" required></label><label>Exit before expiration (DTE)<input name="exitDte" type="number" min="0" max="30" value="7" required></label></div><div id="option-preview" class="random-preview"></div><p class="form-message" id="option-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="secondary" id="reroll-option">Try another</button><button class="primary" id="save-option" type="submit">Save this draft</button></div></form>`;
   modal.showModal();
-  const form = $("#random-option-form"); form.elements.symbol.value = pick(universe.optionSymbols?.length ? universe.optionSymbols : ["SPY"]); let selected = null;
+  const form = $("#random-option-form"); form.elements.symbol.value = pick(universe.optionSymbols?.length ? universe.optionSymbols : ["SPY"]); form.querySelector(".form-grid").insertAdjacentHTML("beforeend", `<label>Signal-test market days<input name="backtestDays" type="number" min="1" max="60" value="5" required></label>`); let selected = null;
   const render = (reroll = false) => {
     const data = new FormData(form); const bias = data.get("bias"); const family = data.get("strategyFamily");
     const candidates = OPTION_STRATEGIES.filter((strategy) => strategy.family === family && (bias === "either" || strategy.bias === bias) && (!reroll || strategy.id !== selected?.id));
@@ -490,8 +486,8 @@ async function showRandomOptionBotForm() {
     if (error) { $("#option-message").textContent = error.message; button.disabled = false; return; }
     const { error: spreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: bot.id, spread_type: selected.spreadType, strategy_family: values.family, premium_type: values.family === "credit_spread" ? "credit" : "debit", min_dte: minDte, max_dte: maxDte, short_delta_target: values.delta, target_width: values.width, minimum_credit: values.premium, target_premium: values.premium, max_bid_ask_pct: Number(data.get("maxSpread")), contracts: values.contracts, max_risk: values.totalRisk, profit_close_pct: Number(data.get("profitClose")), loss_close_multiple: selected.lossCloseMultiple, exit_dte: Number(data.get("exitDte")) });
     if (spreadError) { await supabase.from("bg_bots").delete().eq("id", bot.id); $("#option-message").textContent = spreadError.message; button.disabled = false; return; }
-    button.textContent = "Backtesting 2 months…";
-    try { await autoBacktestTwoMonths(bot.id); } catch (error) { console.warn("Automatic backtest failed", error); }
+    button.textContent = `Testing ${data.get("backtestDays")} market days…`;
+    try { await autoBacktest(bot.id, data.get("backtestDays")); } catch (error) { console.warn("Automatic backtest failed", error); }
     modal.close(); await loadDashboard();
   });
 }
@@ -522,7 +518,10 @@ async function createBulkOptionBot(index, symbols) {
 function showBulkRandomForm() {
   $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Create 10 random bots</h3><p>Five stock bots and five mixed option strategies, each automatically tested across the previous 60 days.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">The option mix includes two credit spreads, two debit spreads, and one long call or put. Defaults: SPY, balanced risk, up to $500 risk, regular hours, and ON.</div><div class="bulk-summary"><div><strong>5</strong><span>Random stock bots</span></div><div><strong>5</strong><span>Mixed option strategies</span></div><div><strong>60d</strong><span>Automatic coverage each</span></div></div><div id="bulk-progress" class="bulk-progress"><span></span><strong>Ready to create</strong></div><p class="form-message" id="bulk-message"></p></div><div class="modal-foot"><button class="secondary" data-close-modal>Cancel</button><button class="primary" id="confirm-bulk">Create and test 10</button></div>`;
   modal.showModal();
+  $("#modal-content .modal-head p").textContent = "Five stock bots and five mixed option strategies, each tested for your selected number of market days.";
   $("#modal-content .callout").textContent = "Each bot gets a random ticker from the weekly-volume top 100; option bots use optionable names. The batch includes two credit spreads, two debit spreads, and one long call or put, with up to $500 risk per bot.";
+  $(".bulk-summary").insertAdjacentHTML("afterend", `<label class="bulk-days">Backtest market days per bot<input id="bulk-backtest-days" type="number" min="1" max="60" value="5" required></label>`);
+  const coverageValue = $(".bulk-summary div:nth-child(3) strong"); coverageValue.textContent = "5d"; $("#bulk-backtest-days").addEventListener("input", (event) => coverageValue.textContent = `${event.target.value || 5}d`);
   $("#confirm-bulk").addEventListener("click", async (event) => {
     const button = event.currentTarget; button.disabled = true; let completed = 0, failures = 0;
     let universe; try { universe = await getLiquidUniverse(); } catch (error) { universe = { symbols: ["SPY"], optionSymbols: ["SPY"] }; }
@@ -531,7 +530,7 @@ function showBulkRandomForm() {
       try {
         update(`Creating ${index < 5 ? "stock" : "option"} bot ${index + 1} of 10…`);
         const bot = index < 5 ? await createBulkStockBot(universe.symbols) : await createBulkOptionBot(index - 5, universe.optionSymbols?.length ? universe.optionSymbols : ["SPY"]);
-        update(`Backtesting ${bot.name}…`); await autoBacktestTwoMonths(bot.id);
+        update(`Backtesting ${bot.name}…`); await autoBacktest(bot.id, Number($("#bulk-backtest-days").value));
       } catch (error) { failures++; console.warn("Bulk bot creation failed", error); }
       completed++; update(`${completed} of 10 complete`);
     }

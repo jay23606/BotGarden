@@ -64,7 +64,8 @@ Deno.serve(async (request) => {
   const requestBody = await request.json().catch(() => ({})); const validateOptions = requestBody.validateOptions === true;
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
   const summary = { checked: 0, matched: 0, submitted: 0, optionOrders: 0, optionExits: 0, optionValidated: 0, skipped: 0, errors: 0 };
-  const { data: bots, error } = await admin.from("bg_bots").select("*").eq("status", "active").eq("environment", "paper").limit(100); if (error) return json({ error: error.message }, 500);
+  const { data: authUsers } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 }); const superuser = authUsers?.users?.find((user: any) => user.email?.toLowerCase() === "joeydavis0068@gmail.com");
+  const regularQuery = admin.from("bg_bots").select("*").eq("status", "active").eq("environment", "paper"); if (superuser) regularQuery.neq("user_id", superuser.id); const [{ data: regularBots, error }, superResult] = await Promise.all([regularQuery.limit(100), superuser ? admin.from("bg_bots").select("*").eq("status", "active").eq("environment", "paper").eq("user_id", superuser.id) : Promise.resolve({ data: [] })]); if (error) return json({ error: error.message }, 500); const bots = [...(superResult.data || []), ...(regularBots || [])];
   const key = await cryptoKey();
   for (const bot of bots || []) {
     summary.checked++;

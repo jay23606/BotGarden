@@ -67,13 +67,14 @@ Deno.serve(async (request) => {
     const authorization = request.headers.get("Authorization"); if (!authorization) return respond({ error: "Authentication required" }, 401);
     admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
     const { data: { user } } = await admin.auth.getUser(authorization.replace(/^Bearer\s+/i, "")); if (!user) return respond({ error: "Invalid session" }, 401);
-    const { botId, start, end } = await request.json();
-    const startAt = new Date(start), endAt = new Date(end); if (!botId || isNaN(startAt.valueOf()) || isNaN(endAt.valueOf()) || endAt <= startAt) return respond({ error: "Valid bot and date range required" }, 400);
-    if (endAt.valueOf() - startAt.valueOf() > 31 * 86400000) return respond({ error: "Backtests are limited to 31 days per run" }, 400);
+    const { botId, start, end, marketDays } = await request.json();
+    let startAt = new Date(start); const endAt = new Date(end); if (!botId || isNaN(startAt.valueOf()) || isNaN(endAt.valueOf()) || endAt <= startAt) return respond({ error: "Valid bot and date range required" }, 400);
+    if (!marketDays && endAt.valueOf() - startAt.valueOf() > 31 * 86400000) return respond({ error: "Backtests are limited to 31 days per run" }, 400); if (marketDays && (Number(marketDays) < 1 || Number(marketDays) > 60)) return respond({ error: "Automatic tests support 1–60 market days" }, 400);
     const { data: bot } = await admin.from("bg_bots").select("*").eq("id", botId).eq("user_id", user.id).single(); if (!bot) return respond({ error: "Bot not found" }, 404);
     const { data: connection } = await admin.from("bg_broker_connections").select("id").eq("user_id", user.id).eq("broker", "alpaca").eq("environment", "paper").eq("status", "connected").single(); if (!connection) return respond({ error: "Connect Alpaca before backtesting" }, 400);
     const { data: credential } = await admin.from("bg_broker_credentials").select("*").eq("connection_id", connection.id).single(); const cryptoKey = await key();
     const [apiKey, apiSecret] = await Promise.all([decrypt(credential.api_key_ciphertext, credential.api_key_iv, cryptoKey), decrypt(credential.api_secret_ciphertext, credential.api_secret_iv, cryptoKey)]);
+    if (marketDays) { const calendar = await fetch(`https://paper-api.alpaca.markets/v2/calendar?start=${startAt.toISOString().slice(0, 10)}&end=${endAt.toISOString().slice(0, 10)}`, { headers: { "APCA-API-KEY-ID": apiKey, "APCA-API-SECRET-KEY": apiSecret } }); if (!calendar.ok) throw new Error("Unable to load Alpaca market calendar"); const sessions = await calendar.json(); const selected = sessions.slice(-Number(marketDays)); if (!selected.length) throw new Error("No market sessions found"); startAt = new Date(`${selected[0].date}T00:00:00Z`); }
     const conditions = bot.start_condition?.conditions || []; const timeframe = conditions[0]?.timeframe || "5Min";
     const supported = new Set(["immediate", "price", "volume", "percent_change", "rsi", "vwap", "moving_average", "relative_volume", "bollinger", "atr", "macd", "opening_range", "gap"]);
     const unsupported = conditions.filter((condition: any) => !supported.has(condition.type)).map((condition: any) => condition.type);
@@ -82,7 +83,7 @@ Deno.serve(async (request) => {
     const url = new URL(`https://data.alpaca.markets/v2/stocks/${encodeURIComponent(bot.symbol)}/bars`); url.searchParams.set("timeframe", timeframe); url.searchParams.set("start", warmStart.toISOString()); url.searchParams.set("end", endAt.toISOString()); url.searchParams.set("limit", "10000"); url.searchParams.set("feed", "iex"); url.searchParams.set("adjustment", "all");
     const marketResponse = await fetch(url, { headers: { "APCA-API-KEY-ID": apiKey, "APCA-API-SECRET-KEY": apiSecret } }); if (!marketResponse.ok) throw new Error(`Alpaca market data error (${marketResponse.status})`);
     const bars: Bar[] = (await marketResponse.json()).bars || []; if (bars.length < 20) throw new Error("Not enough historical bars in this range");
-    const duration = Math.floor((endAt.valueOf() - startAt.valueOf()) / 1000); const signalOnly = bot.asset_class === "option";
+    const duration = marketDays ? Number(marketDays) * 86400 : Math.floor((endAt.valueOf() - startAt.valueOf()) / 1000); const signalOnly = bot.asset_class === "option";
     const { data: backtest, error: createError } = await admin.from("bg_backtests").insert({ bot_id: bot.id, user_id: user.id, status: "running", start_at: startAt.toISOString(), end_at: endAt.toISOString(), duration_seconds: duration, initial_capital: bot.max_allocation, data_feed: "iex", methodology: signalOnly ? "Underlying-signal coverage only; no option P&L modeled." : "Long-only bar simulation; no fees or slippage; entries and exits use bar prices." }).select("id").single(); if (createError) throw createError; backtestId = backtest.id;
     const cache = prepareCache(bars, conditions); let cash = Number(bot.max_allocation), position: any = null, signals = 0, peak = cash, maxDrawdown = 0; const trades: any[] = [];
     const { data: steps } = await admin.from("bg_averaging_steps").select("*").eq("bot_id", bot.id).order("step_number");

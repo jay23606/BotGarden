@@ -41,6 +41,7 @@
 .bulk-progress{position:relative;overflow:hidden;height:40px;border-radius:9px;background:#edf1ee;display:grid;place-items:center}
 .bulk-progress span{position:absolute;left:0;top:0;bottom:0;width:0;background:#cfe7d7;transition:width .25s}
 .bulk-progress strong{position:relative;z-index:1;font-size:12px}
+.bulk-days{display:grid;gap:7px;margin:14px 0;font-size:12px;font-weight:700}.bulk-days input{max-width:220px}
 .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.settings-grid h3{font-size:18px;margin:7px 0}.settings-grid p,.note-card p{color:var(--muted);font-size:13px;line-height:1.55;margin:0}.note-card{max-width:850px}.note-card h3{font-size:17px;margin-bottom:8px}
 .detail-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .detail-grid div,.backtest-result div{padding:13px;border:1px solid var(--line);border-radius:10px;background:#f8faf8}
