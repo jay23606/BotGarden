@@ -154,6 +154,16 @@ create table if not exists public.bg_bot_events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.bg_bot_status (
+  bot_id uuid primary key references public.bg_bots(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  cycle_id text not null,
+  reason_code text not null,
+  message text not null,
+  details jsonb not null default '{}'::jsonb,
+  checked_at timestamptz not null default now()
+);
+
 create table if not exists public.bg_backtests (
   id uuid primary key default gen_random_uuid(),
   bot_id uuid not null references public.bg_bots(id) on delete cascade,
@@ -204,6 +214,7 @@ create table if not exists public.bg_backtest_trades (
 create index if not exists bg_bots_user_status_idx on public.bg_bots(user_id, status);
 create index if not exists bg_runs_bot_started_idx on public.bg_bot_runs(bot_id, started_at desc);
 create index if not exists bg_events_user_created_idx on public.bg_bot_events(user_id, created_at desc);
+create index if not exists bg_status_user_checked_idx on public.bg_bot_status(user_id, checked_at desc);
 
 alter table public.bg_profiles enable row level security;
 alter table public.bg_broker_connections enable row level security;
@@ -216,6 +227,7 @@ alter table public.bg_trades enable row level security;
 alter table public.bg_orders enable row level security;
 alter table public.bg_fills enable row level security;
 alter table public.bg_bot_events enable row level security;
+alter table public.bg_bot_status enable row level security;
 alter table public.bg_backtests enable row level security;
 alter table public.bg_backtest_trades enable row level security;
 
@@ -229,6 +241,7 @@ create policy "trades own rows read" on public.bg_trades for select using (auth.
 create policy "orders own rows read" on public.bg_orders for select using (auth.uid() = user_id);
 create policy "fills own rows read" on public.bg_fills for select using (auth.uid() = user_id);
 create policy "events own rows read" on public.bg_bot_events for select using (auth.uid() = user_id);
+create policy "status own rows read" on public.bg_bot_status for select using (auth.uid() = user_id);
 create policy "backtests own rows read" on public.bg_backtests for select using (auth.uid() = user_id);
 create policy "backtest trades own rows read" on public.bg_backtest_trades for select using (auth.uid() = user_id);
 
