@@ -1,0 +1,27 @@
+.overview-account {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+.overview-account div, .overview-bots div { display: grid; gap: 5px; }
+.overview-account span, .overview-assets span, .overview-bots span { color: var(--muted); font-size: 12px; }
+.overview-account strong { font-size: 17px; }
+.overview-assets { padding: 0; }
+.overview-asset {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 20px;
+  align-items: center;
+  padding: 17px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.overview-asset:last-child { border-bottom: 0; }
+.overview-asset > div { display: grid; gap: 4px; }
+.overview-bots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.overview-bots small { color: var(--muted); }
+@media (max-width: 900px) { .overview-account { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) {
+  .overview-account, .overview-bots { grid-template-columns: 1fr; }
+  .overview-asset { grid-template-columns: 1fr 1fr; }
+  .overview-asset > div:first-child { grid-column: 1 / -1; }
+}

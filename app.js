@@ -84,10 +84,11 @@ async function getConnection() {
 }
 
 async function loadDashboard() {
-  const [{ data: botData }, connection, { data: backtests }] = await Promise.all([
+  const [{ data: botData }, connection, { data: backtests }, portfolio] = await Promise.all([
     supabase.from("bg_bots").select("id,name,bot_type,status,asset_class,symbol,direction,max_allocation,max_active_trades,start_condition,take_profit_pct,stop_loss_pct,cooldown_seconds,session_policy,created_at").order("created_at", { ascending: false }),
     getConnection(),
     supabase.from("bg_backtests").select("bot_id,status,duration_seconds,initial_capital,net_pnl,return_pct,signal_count,estimated_pnl,estimated_return_pct,daily_regimes,start_at,end_at,created_at").in("status", ["completed", "signal_only"]),
+    invoke("portfolio-snapshot", {}).catch((error) => ({ connected: false, account: null, positions: [], error: error.message })),
   ]);
   backtestSummary = new Map();
   latestBacktest = new Map();
@@ -95,17 +96,44 @@ async function loadDashboard() {
   bots = (botData || []).sort((a, b) => { const aProfit = backtestSummary.get(a.id)?.profitPct, bProfit = backtestSummary.get(b.id)?.profitPct; if (aProfit != null || bProfit != null) return (bProfit ?? -Infinity) - (aProfit ?? -Infinity); return new Date(b.created_at) - new Date(a.created_at); });
   updatePruneButton();
   const active = bots.filter((b) => b.status === "active").length;
+  const positions = portfolio?.positions || [], account = portfolio?.account;
+  const unrealizedPnl = positions.reduce((sum, position) => sum + Number(position.unrealized_pl || 0), 0);
+  const dailyChange = account ? Number(account.equity) - Number(account.last_equity) : null;
+  const dailyChangePct = account?.last_equity ? dailyChange / Number(account.last_equity) * 100 : null;
+  const pnlClass = (value) => Number(value) > 0 ? "profit" : Number(value) < 0 ? "loss" : "";
+  const assetLabels = { equity: "Stocks", option: "Options", crypto: "Crypto" };
+  const assetSummary = Object.keys(assetLabels).map((assetClass) => {
+    const matching = positions.filter((position) => position.asset_class === assetClass);
+    const marketValue = matching.reduce((sum, position) => sum + Math.abs(Number(position.market_value || 0)), 0);
+    const pnl = matching.reduce((sum, position) => sum + Number(position.unrealized_pl || 0), 0);
+    return `<div class="overview-asset"><div><strong>${assetLabels[assetClass]}</strong><span>${matching.length} open position${matching.length === 1 ? "" : "s"}</span></div><div><span>Market value</span><strong>${money(marketValue)}</strong></div><div><span>Unrealized P&amp;L</span><strong class="${pnlClass(pnl)}">${money(pnl)}</strong></div></div>`;
+  }).join("");
+  const botCounts = Object.keys(assetLabels).map((assetClass) => {
+    const matching = bots.filter((bot) => bot.asset_class === assetClass), running = matching.filter((bot) => bot.status === "active").length;
+    return `<div><span>${assetLabels[assetClass]}</span><strong>${running} on</strong><small>${matching.length} configured</small></div>`;
+  }).join("");
+  const snapshotMessage = portfolio?.error ? "Live account data is temporarily unavailable" : account ? `Updated ${new Date(portfolio.as_of).toLocaleString()}` : "Connect Alpaca to sync";
   content.innerHTML = `
     <div class="cards">
-      <div class="card metric"><span class="label">PAPER EQUITY</span><strong>—</strong><div class="subtle">Connect Alpaca to sync</div></div>
+      <div class="card metric"><span class="label">PAPER EQUITY</span><strong>${account ? money(account.equity) : "—"}</strong><div class="subtle">${snapshotMessage}</div></div>
       <div class="card metric"><span class="label">ACTIVE BOTS</span><strong>${active}</strong><div class="subtle">${bots.length} configured</div></div>
-      <div class="card metric"><span class="label">OPEN POSITIONS</span><strong>0</strong><div class="subtle">No open trades</div></div>
-      <div class="card metric"><span class="label">TOTAL P&L</span><strong>${money(0)}</strong><div class="subtle">Paper performance</div></div>
+      <div class="card metric"><span class="label">OPEN POSITIONS</span><strong>${positions.length}</strong><div class="subtle">Across stocks, options, and crypto</div></div>
+      <div class="card metric"><span class="label">UNREALIZED P&amp;L</span><strong class="${pnlClass(unrealizedPnl)}">${account ? money(unrealizedPnl) : "—"}</strong><div class="subtle">Current open positions</div></div>
     </div>
+    <div class="section-head"><h3>Account snapshot</h3></div>
+    <div class="card overview-account">
+      <div><span>Today's equity change</span><strong class="${pnlClass(dailyChange)}">${dailyChange == null ? "—" : `${money(dailyChange)} (${dailyChangePct >= 0 ? "+" : ""}${pct(dailyChangePct)})`}</strong></div>
+      <div><span>Cash</span><strong>${account ? money(account.cash) : "—"}</strong></div>
+      <div><span>Buying power</span><strong>${account ? money(account.buying_power) : "—"}</strong></div>
+      <div><span>Long market value</span><strong>${account ? money(account.long_market_value) : "—"}</strong></div>
+    </div>
+    <div class="section-head"><h3>Open exposure</h3></div>
+    <div class="card overview-assets">${assetSummary}</div>
+    <div class="section-head"><h3>Automation summary</h3></div>
+    <div class="card overview-bots">${botCounts}</div>
     <div class="section-head"><h3>Alpaca paper account</h3></div>
     <div class="card connection-card"><div class="connection-state"><div><span class="connection-dot ${connection?.status === "connected" ? "on" : ""}"></span><strong>${connection ? "Alpaca connected · keys saved" : "Not connected"}</strong><div class="subtle">${connection ? `Paper account ${escapeHtml(connection.account_number || "")} · encrypted credentials are remembered by BotGarden${connection.last_verified_at ? ` · verified ${new Date(connection.last_verified_at).toLocaleString()}` : ""}` : "Add your own Alpaca paper API credentials once."}</div></div><button class="secondary" data-connect>${connection ? "Replace saved keys" : "Connect account"}</button></div></div>
-    <div class="runner-note"><strong>Paper execution worker active.</strong> ON stock and option bots are evaluated every five minutes and may submit Alpaca paper orders when every start condition, risk, liquidity, and position check passes.</div>
-    <div class="section-head"><h3>Recent bots</h3></div>${renderBots()}`;
+    <div class="runner-note"><strong>Paper execution worker active.</strong> ON bots are evaluated every five minutes and may submit Alpaca paper orders when every start condition, risk, liquidity, and position check passes.</div>`;
 }
 
 async function refreshWorkspace(view = currentView) {
