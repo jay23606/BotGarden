@@ -92,6 +92,24 @@ Deno.serve(async (req) => {
       price: Number(fill.price),
       transaction_time: fill.transaction_time,
     }));
+    const cancelableStatuses = new Set(["new", "accepted", "pending_new", "partially_filled", "held", "calculated", "pending_replace", "accepted_for_bidding", "stopped"]);
+    const pendingOrders = rawOrders.filter((order: any) => cancelableStatuses.has(order.status)).map((order: any) => ({
+      id: order.id,
+      client_order_id: order.client_order_id,
+      symbol: order.symbol || order.legs?.[0]?.symbol || "Multi-leg option",
+      asset_class: order.asset_class === "crypto" ? "crypto" : order.asset_class === "us_option" || order.order_class === "mleg" ? "option" : "equity",
+      side: order.side || order.legs?.[0]?.side,
+      order_type: order.type,
+      order_class: order.order_class,
+      quantity: Number(order.qty || 0),
+      notional: order.notional == null ? null : Number(order.notional),
+      filled_quantity: Number(order.filled_qty || 0),
+      limit_price: order.limit_price == null ? null : Number(order.limit_price),
+      stop_price: order.stop_price == null ? null : Number(order.stop_price),
+      status: order.status,
+      submitted_at: order.submitted_at,
+      legs: (order.legs || []).map((leg: any) => ({ symbol: leg.symbol, side: leg.side, ratio_qty: leg.ratio_qty, position_intent: leg.position_intent })),
+    }));
     let reconciledOrders = 0;
     const brokerOrderIds = rawOrders.map((order: any) => order.id).filter(Boolean);
     if (brokerOrderIds.length) {
@@ -111,7 +129,7 @@ Deno.serve(async (req) => {
         }
       }
     }
-    return json({ connected: true, account, positions, history, fills, reconciled_orders: reconciledOrders, as_of: new Date().toISOString() });
+    return json({ connected: true, account, positions, history, fills, pending_orders: pendingOrders, reconciled_orders: reconciledOrders, as_of: new Date().toISOString() });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Unable to load portfolio" }, 500);
   }

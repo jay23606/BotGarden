@@ -15,9 +15,17 @@
 .fill-row { display: grid; grid-template-columns: 1.2fr .75fr .8fr .9fr 1.4fr; gap: 14px; align-items: center; padding: 13px 15px; background: white; border: 1px solid var(--line); border-radius: 10px; }
 .fill-row > div { display: grid; gap: 3px; }
 .fill-side { text-transform: uppercase; font-size: 11px; font-weight: 700; }
+.pending-order-list { display: grid; gap: 8px; }
+.pending-order-row { display: grid; grid-template-columns: 1.4fr 1fr .8fr 1.1fr auto; gap: 14px; align-items: center; padding: 14px 15px; background: white; border: 1px solid var(--line); border-radius: 10px; }
+.pending-order-row > div { display: grid; gap: 3px; }
+.pending-order-row span, .pending-order-row small { color: var(--muted); font-size: 11px; }
+.order-cancel { border: 1px solid #d7a5a5; background: #fff7f7; color: #913b3b; border-radius: 9px; padding: 8px 10px; font-size: 11px; font-weight: 700; }
+.order-cancel:disabled { opacity: .55; }
 @media (max-width: 700px) {
   .risk-health-row { grid-template-columns: 1fr 1fr; }
   .risk-health-row > :last-child { grid-column: 1 / -1; }
   .fill-row { grid-template-columns: 1fr 1fr; }
   .fill-row > :last-child { grid-column: 1 / -1; }
+  .pending-order-row { grid-template-columns: 1fr 1fr; }
+  .pending-order-row > div:first-child, .pending-order-row > button { grid-column: 1 / -1; }
 }
