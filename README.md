@@ -21,6 +21,7 @@ BotGarden combines a static GitHub Pages interface with Supabase Auth, Postgres,
 - Explicitly labeled, low-confidence option replay estimates
 - Market-regime and volatility context for historical tests
 - Per-row underlying-price sparklines and cumulative result ranking
+- Ticker intelligence with risk metrics, liquidity measures, asset flags, and recent Alpaca news
 - Randomized parent/child strategy experiments with matched test coverage
 - Immediate individual deletion and bulk pruning below a selected 2% rule
 - ON/OFF paper-execution controls
