@@ -51,6 +51,7 @@ $("#auth-form").addEventListener("submit", async (event) => {
 $("#sign-out").addEventListener("click", () => supabase?.auth.signOut());
 $("#new-bot").addEventListener("click", showBotForm);
 $("#random-bot").addEventListener("click", showRandomBotForm);
+$("#random-option-bot").addEventListener("click", showRandomOptionBotForm);
 document.addEventListener("click", (event) => {
   const nav = event.target.closest("[data-view]");
   if (nav) switchView(nav.dataset.view);
@@ -272,6 +273,72 @@ function showRandomBotForm() {
     if (error) { $("#random-message").textContent = error.message; button.disabled = false; return; }
     const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
     if (stepError) { $("#random-message").textContent = stepError.message; button.disabled = false; return; }
+    modal.close(); await loadDashboard();
+  });
+}
+
+const OPTION_STRATEGIES = [
+  {
+    id: "bull_put_pullback", name: "Bull Put Pullback", spreadType: "bull_put_credit", bias: "bullish",
+    description: "Sells a put spread only while the broader trend is bullish and RSI shows a measured pullback.",
+    conditions: [
+      { type: "moving_average", timeframe: "15Min", parameters: { average: "ema", fast: 9, slow: 21, operator: "above" } },
+      { type: "rsi", timeframe: "15Min", parameters: { period: 14, operator: "below", value: 45 } },
+    ],
+  },
+  {
+    id: "bull_put_breakout", name: "Bull Put Breakout", spreadType: "bull_put_credit", bias: "bullish",
+    description: "Requires an upside opening-range break with strong relative volume before selling downside premium.",
+    conditions: [
+      { type: "opening_range", timeframe: "5Min", parameters: { minutes: "15", operator: "above" } },
+      { type: "relative_volume", timeframe: "5Min", parameters: { operator: "above", value: 1.5, lookback: 20 } },
+    ],
+  },
+  {
+    id: "bear_call_rally", name: "Bear Call Rally Fade", spreadType: "bear_call_credit", bias: "bearish",
+    description: "Waits for a bearish trend with an overextended RSI reading before selling an out-of-the-money call spread.",
+    conditions: [
+      { type: "moving_average", timeframe: "15Min", parameters: { average: "ema", fast: 9, slow: 21, operator: "below" } },
+      { type: "rsi", timeframe: "15Min", parameters: { period: 14, operator: "above", value: 55 } },
+    ],
+  },
+  {
+    id: "bear_call_breakdown", name: "Bear Call Breakdown", spreadType: "bear_call_credit", bias: "bearish",
+    description: "Requires a downside opening-range break with strong relative volume before selling upside premium.",
+    conditions: [
+      { type: "opening_range", timeframe: "5Min", parameters: { minutes: "15", operator: "below" } },
+      { type: "relative_volume", timeframe: "5Min", parameters: { operator: "above", value: 1.5, lookback: 20 } },
+    ],
+  },
+];
+
+function showRandomOptionBotForm() {
+  $("#modal-content").innerHTML = `<form id="random-option-form"><div class="modal-head"><div><h3>Generate a random credit-spread bot</h3><p>Creates a defined-risk vertical spread with coherent entry and exit rules.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">Paper options require Alpaca Level 3. Maximum loss is estimated as spread width minus entry credit, multiplied by 100 and the number of spreads.</div><div class="form-grid"><label>Maximum risk ($)<input name="risk" type="number" min="100" max="100000" step="25" value="500" required></label><label>Underlying symbol<input name="symbol" value="SPY" maxlength="10" required></label><label>Market bias<select name="bias"><option value="either">Surprise me</option><option value="bullish">Bullish — put credit spread</option><option value="bearish">Bearish — call credit spread</option></select></label><label>Risk posture<select name="posture"><option value="conservative">Conservative</option><option value="balanced" selected>Balanced</option><option value="aggressive">Aggressive</option></select></label><label>Expiration window<select name="dte"><option value="30,45" selected>30–45 days</option><option value="21,35">21–35 days</option><option value="45,60">45–60 days</option></select></label><label>Spread width ($)<select name="width"><option value="2.5">$2.50</option><option value="5" selected>$5.00</option><option value="10">$10.00</option></select></label><label>Minimum entry credit ($)<input name="credit" type="number" min="0.05" step="0.05" value="1.00" required></label><label>Maximum bid/ask spread (%)<input name="maxSpread" type="number" min="1" max="100" step="1" value="15" required></label><label>Close profit at (%)<input name="profitClose" type="number" min="5" max="95" value="50" required></label><label>Exit before expiration (DTE)<input name="exitDte" type="number" min="0" max="30" value="7" required></label></div><div id="option-preview" class="random-preview"></div><p class="form-message" id="option-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="secondary" id="reroll-option">Try another</button><button class="primary" id="save-option" type="submit">Save this draft</button></div></form>`;
+  modal.showModal();
+  const form = $("#random-option-form"); let selected = null;
+  const render = (reroll = false) => {
+    const data = new FormData(form); const bias = data.get("bias");
+    const candidates = OPTION_STRATEGIES.filter((strategy) => (bias === "either" || strategy.bias === bias) && (!reroll || strategy.id !== selected?.id));
+    if (!selected || reroll || (bias !== "either" && selected.bias !== bias)) selected = candidates[Math.floor(Math.random() * candidates.length)] || OPTION_STRATEGIES.find((strategy) => strategy.bias === bias) || OPTION_STRATEGIES[0];
+    const risk = Number(data.get("risk")); const width = Number(data.get("width")); const credit = Number(data.get("credit"));
+    const riskPerSpread = Math.max(0, (width - credit) * 100); const contracts = riskPerSpread ? Math.floor(risk / riskPerSpread) : 0; const totalRisk = contracts * riskPerSpread;
+    const posture = data.get("posture"); const delta = posture === "conservative" ? 0.18 : posture === "aggressive" ? 0.30 : 0.23;
+    const valid = credit < width && contracts >= 1;
+    $("#save-option").disabled = !valid;
+    $("#option-message").textContent = valid ? "" : credit >= width ? "Minimum credit must be less than the spread width." : `This budget is below the estimated ${money(riskPerSpread)} risk of one spread. Increase the budget, increase credit, or reduce width.`;
+    $("#option-preview").innerHTML = `<span class="eyebrow">DEFINED-RISK STRATEGY</span><h3>${selected.name}</h3><p>${selected.description}</p><div class="random-stats"><div><span>Target short delta</span><strong>${delta.toFixed(2)}</strong></div><div><span>Contracts</span><strong>${contracts || "—"}</strong></div><div><span>Estimated max loss</span><strong>${valid ? money(totalRisk) : "—"}</strong></div><div><span>Maximum profit</span><strong>${valid ? money(contracts * credit * 100) : "—"}</strong></div></div><div class="subtle">${selected.spreadType === "bull_put_credit" ? "Sell higher-strike put + buy lower-strike put" : "Sell lower-strike call + buy higher-strike call"} · ${selected.conditions.map((condition) => conditionDefinition(condition.type)[1]).join(" + ")}</div>`;
+    return { risk, width, credit, contracts, totalRisk, delta };
+  };
+  $("#reroll-option").addEventListener("click", () => render(true));
+  form.addEventListener("input", () => render(false)); render(true);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault(); const button = event.submitter; button.disabled = true; const values = render(false); const data = new FormData(form);
+    const [minDte, maxDte] = String(data.get("dte")).split(",").map(Number); const symbol = String(data.get("symbol")).toUpperCase().trim();
+    const payload = { user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "credit_spread", status: "draft", broker: "alpaca", environment: "paper", asset_class: "option", symbol, direction: selected.bias === "bullish" ? "long" : "short", max_allocation: values.totalRisk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id }, take_profit_pct: Number(data.get("profitClose")), stop_loss_pct: null, cooldown_seconds: 86400, session_policy: "regular" };
+    const { data: bot, error } = await supabase.from("bg_bots").insert(payload).select().single();
+    if (error) { $("#option-message").textContent = error.message; button.disabled = false; return; }
+    const { error: spreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: bot.id, spread_type: selected.spreadType, min_dte: minDte, max_dte: maxDte, short_delta_target: values.delta, target_width: values.width, minimum_credit: values.credit, max_bid_ask_pct: Number(data.get("maxSpread")), contracts: values.contracts, max_risk: values.totalRisk, profit_close_pct: Number(data.get("profitClose")), loss_close_multiple: 2, exit_dte: Number(data.get("exitDte")) });
+    if (spreadError) { await supabase.from("bg_bots").delete().eq("id", bot.id); $("#option-message").textContent = spreadError.message; button.disabled = false; return; }
     modal.close(); await loadDashboard();
   });
 }
