@@ -15,7 +15,7 @@ BotGarden combines a static GitHub Pages interface with Supabase Auth, Postgres,
 - Stock and option bot creation with one to three composable start conditions
 - Bounded random strategy generation using coherent parameter families
 - Configurable bulk generation, defaulting to 15 stock and 10 option bots
-- Liquid-symbol selection rather than a fixed SPY-only universe
+- Configurable ticker discovery by sustained volume, latest-session volume, relative volume, or active price movement, with price and dollar-volume safety floors
 - Defined-risk credit spreads, debit spreads, and long-option strategies
 - Stock backtests using Alpaca historical IEX bars
 - Explicitly labeled, low-confidence option replay estimates

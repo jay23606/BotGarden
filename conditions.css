@@ -40,6 +40,7 @@
 .delete-warning{padding:16px;border:1px solid #efd4d4;border-radius:10px;background:#fff7f7;color:#7c2929;font-size:13px}
 .runner-note{max-width:650px;margin-top:9px;padding:10px 13px;border-radius:9px;background:#fff4d7;color:#6d5416;font-size:11px}
 .bulk-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}
+.universe-picker{border:0;padding:0;margin:18px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px}.universe-picker legend{font-size:12px;font-weight:800;margin-bottom:8px}.universe-picker label{display:flex;align-items:flex-start;gap:9px;padding:11px;border:1px solid var(--line);border-radius:10px;background:#fafcfa;cursor:pointer}.universe-picker label:has(input:checked){border-color:#8dbca3;background:#eef7f0;box-shadow:0 0 0 2px rgba(31,107,79,.08)}.universe-picker input{width:auto;margin:3px 0 0;accent-color:var(--green)}.universe-picker span{display:grid;gap:2px}.universe-picker b{font-size:12px}.universe-picker small{color:var(--muted);font-size:10px;line-height:1.35}
 .bulk-summary div{padding:15px;border:1px solid var(--line);border-radius:10px;background:#f8faf8;text-align:center}
 .bulk-summary strong{display:block;font:700 24px Manrope,sans-serif}.bulk-summary span{display:block;margin-top:4px;color:var(--muted);font-size:11px}
 .bulk-progress{position:relative;overflow:hidden;height:40px;border-radius:9px;background:#edf1ee;display:grid;place-items:center}
@@ -75,3 +76,4 @@
 @media(max-width:1100px){.bot-row{grid-template-columns:minmax(150px,1fr) auto minmax(125px,1fr) 105px auto}.bot-row>div:nth-child(5){display:none}}
 @media(max-width:650px){.bot-row{grid-template-columns:1fr auto}.bot-row>div:nth-child(3),.bot-row>div:nth-child(4),.bot-row>div:nth-child(5),.bot-row>.row-actions{display:flex}.bot-row>div:nth-child(3){display:block}.bot-row>.row-actions{grid-column:1/-1;justify-content:flex-start}.sparkline{justify-self:end}.bot-row>div:nth-child(5){display:none}}
 @media(max-width:650px){.ticker-heading{align-items:flex-start}.ticker-grid{grid-template-columns:1fr 1fr}.asset-flags small{width:100%;margin-left:0}}
+@media(max-width:650px){.universe-picker{grid-template-columns:1fr}}
