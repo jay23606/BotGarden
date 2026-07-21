@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#15382c">
+  <title>BotGarden — Paper trading strategies</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="setup-banner" class="setup-banner hidden">Add your Supabase URL and publishable key to <code>config.js</code> to enable sign-in.</div>
+
+  <main id="auth-view" class="auth-shell">
+    <section class="brand-panel">
+      <a class="brand" href="#"><span class="brand-mark">BG</span> BotGarden</a>
+      <div class="brand-copy">
+        <span class="eyebrow light">AUTOMATED PAPER TRADING</span>
+        <h1>Test the strategy.<br><em>Keep the capital.</em></h1>
+        <p>Build condition-driven DCA strategies for stocks and options, then run them against your Alpaca paper account.</p>
+      </div>
+      <div class="brand-foot">Alpaca paper trading · Your keys stay private</div>
+    </section>
+    <section class="auth-panel">
+      <form id="auth-form" class="auth-card">
+        <span class="eyebrow">WELCOME</span>
+        <h2 id="auth-title">Sign in to BotGarden</h2>
+        <p id="auth-subtitle">Use your email and password to continue.</p>
+        <label>Email<input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <label>Password<input id="password" name="password" type="password" autocomplete="current-password" minlength="8" required placeholder="At least 8 characters"></label>
+        <button class="primary wide" id="auth-submit" type="submit">Sign in</button>
+        <p id="auth-message" class="form-message" aria-live="polite"></p>
+        <button class="text-button" id="auth-toggle" type="button">New here? Create an account</button>
+      </form>
+    </section>
+  </main>
+
+  <div id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <a class="brand app-brand" href="#"><span class="brand-mark">BG</span> BotGarden</a>
+      <nav>
+        <button class="nav-item active" data-view="dashboard">Overview</button>
+        <button class="nav-item" data-view="bots">Bots</button>
+        <button class="nav-item" data-view="activity">Activity</button>
+        <button class="nav-item" data-view="settings">Settings</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="paper-pill"><span></span> Paper trading</div>
+        <button id="sign-out" class="nav-item">Sign out</button>
+      </div>
+    </aside>
+    <main class="workspace">
+      <header class="topbar">
+        <div><span class="eyebrow">BOTGARDEN</span><h2 id="page-title">Overview</h2></div>
+        <button id="new-bot" class="primary">+ New bot</button>
+      </header>
+      <section id="page-content"></section>
+    </main>
+  </div>
+
+  <dialog id="modal"><div id="modal-content"></div></dialog>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

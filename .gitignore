@@ -1,0 +1,4 @@
+.supabase/
+.env
+.env.*
+!config.example.js
