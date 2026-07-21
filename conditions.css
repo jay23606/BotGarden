@@ -13,4 +13,13 @@
 .condition-params{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:10px 12px}
 .condition-grid input,.condition-grid select{padding:9px 10px}
 .condition-builder>.secondary{margin-top:2px}
+.topbar-actions{display:flex;align-items:center;gap:9px}
+.random-preview{margin-top:22px;padding:20px;border:1px solid var(--line);border-radius:13px;background:#f8faf8}
+.random-preview h3{margin:6px 0;font-size:20px}
+.random-preview p{margin:0 0 17px;color:var(--muted);font-size:13px;line-height:1.5}
+.random-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:13px}
+.random-stats div{padding:10px;background:white;border:1px solid var(--line);border-radius:9px}
+.random-stats span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.random-stats strong{display:block;margin-top:5px;font-size:12px}
 @media(max-width:650px){.condition-builder-head{display:block}.logic-control{margin-top:12px}.condition-grid,.condition-params{grid-template-columns:1fr}.condition-params{grid-column:auto}}
+@media(max-width:650px){.topbar-actions{gap:5px}.topbar-actions button{padding:9px;font-size:12px}.random-stats{grid-template-columns:1fr 1fr}}
