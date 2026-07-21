@@ -283,15 +283,16 @@ function readConditions(form) {
 
 const RANDOM_STRATEGIES = [
   {
-    id: "rsi_vwap", name: "RSI + VWAP Reversion", posture: ["conservative", "balanced"], horizon: ["intraday", "swing"],
+    id: "rsi_vwap", family: "pullback", selectionWeight: 20, name: "RSI + VWAP Reversion", posture: ["conservative", "balanced"], horizon: ["intraday", "swing"],
     description: "Waits for an oversold reading and price below VWAP before averaging into a potential rebound.",
     conditions: [
       { type: "rsi", timeframe: "5Min", parameters: { period: 14, operator: "below", value: 30 } },
       { type: "vwap", timeframe: "5Min", parameters: { operator: "below" } },
+      { type: "moving_average", timeframe: "5Min", parameters: { average: "ema", fast: 20, slow: 50, operator: "above" } },
     ], steps: 3, deviation: 2, stepScale: 1.15, volumeScale: 1.2, takeProfit: 2, stopLoss: 10,
   },
   {
-    id: "trend_pullback", name: "Trend Pullback", posture: ["conservative", "balanced"], horizon: ["intraday", "swing"],
+    id: "trend_pullback", family: "trend", selectionWeight: 25, name: "Trend Pullback", posture: ["conservative", "balanced"], horizon: ["intraday", "swing"],
     description: "Requires a bullish moving-average structure while RSI shows a controlled pullback.",
     conditions: [
       { type: "moving_average", timeframe: "15Min", parameters: { average: "ema", fast: 9, slow: 21, operator: "above" } },
@@ -299,7 +300,7 @@ const RANDOM_STRATEGIES = [
     ], steps: 3, deviation: 2.5, stepScale: 1.1, volumeScale: 1.15, takeProfit: 3, stopLoss: 12,
   },
   {
-    id: "opening_breakout", name: "Opening Range Breakout", posture: ["balanced", "aggressive"], horizon: ["intraday"],
+    id: "opening_breakout", family: "breakout", selectionWeight: 15, name: "Opening Range Breakout", posture: ["balanced", "aggressive"], horizon: ["intraday"],
     description: "Enters only when price breaks the opening range with above-average volume.",
     conditions: [
       { type: "opening_range", timeframe: "5Min", parameters: { minutes: "15", operator: "above" } },
@@ -307,15 +308,16 @@ const RANDOM_STRATEGIES = [
     ], steps: 1, deviation: 3, stepScale: 1, volumeScale: 1, takeProfit: 3, stopLoss: 6,
   },
   {
-    id: "bollinger_reversion", name: "Bollinger Reversion", posture: ["balanced", "aggressive"], horizon: ["intraday", "swing"],
+    id: "bollinger_reversion", family: "mean_reversion", selectionWeight: 15, name: "Bollinger Reversion", posture: ["balanced", "aggressive"], horizon: ["intraday", "swing"],
     description: "Looks for price beyond the lower band, confirmed by elevated volatility before attempting a rebound trade.",
     conditions: [
       { type: "bollinger", timeframe: "15Min", parameters: { period: 20, deviations: 2, operator: "below_lower" } },
       { type: "atr", timeframe: "15Min", parameters: { period: 14, operator: "above", value: 1.5 } },
+      { type: "relative_volume", timeframe: "15Min", parameters: { operator: "above", value: 1.15, lookback: 20 } },
     ], steps: 4, deviation: 2, stepScale: 1.2, volumeScale: 1.15, takeProfit: 2.5, stopLoss: 14,
   },
   {
-    id: "gap_recovery", name: "Gap Recovery", posture: ["balanced", "aggressive"], horizon: ["intraday"],
+    id: "gap_recovery", family: "experimental", selectionWeight: 5, name: "Gap Recovery", posture: ["balanced", "aggressive"], horizon: ["intraday"],
     description: "Looks for a moderate gap down followed by a move back above VWAP, avoiding blind entries at the open.",
     conditions: [
       { type: "gap", timeframe: "5Min", parameters: { operator: "down", value: 2 } },
@@ -323,7 +325,7 @@ const RANDOM_STRATEGIES = [
     ], steps: 2, deviation: 2.5, stepScale: 1.1, volumeScale: 1.1, takeProfit: 2.5, stopLoss: 8,
   },
   {
-    id: "macd_volume", name: "MACD Volume Confirmation", posture: ["balanced", "aggressive"], horizon: ["intraday", "swing"],
+    id: "macd_volume", family: "breakout", selectionWeight: 20, name: "MACD Volume Confirmation", posture: ["balanced", "aggressive"], horizon: ["intraday", "swing"],
     description: "Combines a bullish MACD crossover with increased relative volume to reduce weak crossover signals.",
     conditions: [
       { type: "macd", timeframe: "15Min", parameters: { fast: 12, slow: 26, signal: 9, operator: "bullish" } },
@@ -333,6 +335,7 @@ const RANDOM_STRATEGIES = [
 ];
 
 const pick = (values) => values[Math.floor(Math.random() * values.length)];
+function weightedPick(values, weightKey = "selectionWeight") { const total = values.reduce((sum, value) => sum + Number(value[weightKey] || 1), 0); let roll = Math.random() * total; return values.find((value) => (roll -= Number(value[weightKey] || 1)) <= 0) || values.at(-1); }
 let liquidUniverse = null;
 async function getLiquidUniverse() { if (!liquidUniverse) liquidUniverse = await invoke("liquid-symbols", {}); return liquidUniverse; }
 const randomStep = (min, max, step) => Number((min + Math.floor(Math.random() * (Math.floor((max - min) / step) + 1)) * step).toFixed(4));
@@ -349,16 +352,17 @@ function randomizeCondition(condition) {
   return { condition: next, changed };
 }
 
-function randomizedStockStrategy(template) {
+function randomizedStockStrategy(template, posture = "balanced", horizon = "intraday", symbol = "SPY") {
   const next = structuredClone(template); const randomized = {};
   next.conditions = template.conditions.map((condition) => { const result = randomizeCondition(condition); Object.assign(randomized, result.changed); return result.condition; });
-  next.steps = Math.max(1, Math.min(5, template.steps + pick([-1, 0, 0, 1])));
-  next.deviation = randomStep(Math.max(1, template.deviation - .6), template.deviation + .6, .1);
-  next.stepScale = randomStep(Math.max(1, template.stepScale - .1), Math.min(1.35, template.stepScale + .15), .05);
-  next.volumeScale = randomStep(Math.max(1, template.volumeScale - .1), Math.min(1.4, template.volumeScale + .15), .05);
-  next.takeProfit = randomStep(Math.max(1, template.takeProfit - .6), template.takeProfit + .7, .1);
-  next.stopLoss = randomStep(Math.max(5, template.stopLoss - 2), template.stopLoss + 2, 1);
-  Object.assign(randomized, { "Averaging orders": next.steps, "Initial deviation": `${next.deviation}%`, "Step scale": next.stepScale, "Volume scale": next.volumeScale, "Take profit": `${next.takeProfit}%`, "Stop loss": `${next.stopLoss}%` });
+  const profiles = { conservative: { steps: [1, 2], volume: [1, 1.08], atr: [.8, 1.6], reward: [1, 1.35], stop: [1.4, 1.8] }, balanced: { steps: [1, 3], volume: [1, 1.15], atr: [1, 2.1], reward: [1.15, 1.65], stop: [1.5, 2] }, aggressive: { steps: [1, 3], volume: [1, 1.2], atr: [1.3, 2.8], reward: [1.3, 2], stop: [1.6, 2.2] } };
+  const profile = profiles[posture] || profiles.balanced, liquidEtf = ["SPY","QQQ","IWM","DIA","XLF","XLK","XLE","TLT","GLD","SLV","EEM","HYG"].includes(String(symbol).toUpperCase());
+  const atrPct = randomStep(profile.atr[0], profile.atr[1] + (liquidEtf ? 0 : .4), .1), rewardMultiple = randomStep(profile.reward[0], profile.reward[1], .05), stopMultiple = randomStep(profile.stop[0], profile.stop[1], .05);
+  next.steps = Math.floor(randomStep(profile.steps[0], profile.steps[1], 1)); next.stepScale = randomStep(1, 1.08, .02); next.volumeScale = randomStep(profile.volume[0], profile.volume[1], .01);
+  next.takeProfit = Number(Math.max(.7, atrPct * rewardMultiple).toFixed(2)); next.stopLoss = Number(Math.max(2, atrPct * stopMultiple).toFixed(2));
+  const spacingUnits = Array.from({ length: next.steps }, (_, index) => Math.pow(next.stepScale, index)).reduce((sum, value) => sum + value, 0); next.deviation = Number((next.stopLoss * randomStep(.5, .68, .02) / spacingUnits).toFixed(2));
+  next.volatilityModel = { type: "atr_scaled_defaults", assumed_atr_pct: atrPct, profit_atr_multiple: rewardMultiple, stop_atr_multiple: stopMultiple };
+  Object.assign(randomized, { "Strategy family": next.family.replaceAll("_", " "), "Risk profile": posture, "Time horizon": horizon, "Volatility assumption": `${atrPct}% ATR`, "Profit target": `${rewardMultiple} ATR / ${next.takeProfit}%`, "Protective stop": `${stopMultiple} ATR / ${next.stopLoss}%`, "Averaging orders": next.steps, "Initial spacing": `${next.deviation}%`, "Step scale": next.stepScale, "Order growth": `${next.volumeScale}×`, "Ticker adjustment": liquidEtf ? "liquid ETF" : "individual stock" });
   next.randomizedFields = randomized; next.generationId = crypto.randomUUID();
   return next;
 }
@@ -380,7 +384,7 @@ async function autoBacktest(botId, marketDays = 5) {
 
 async function showRandomBotForm() {
   let universe; try { universe = await getLiquidUniverse(); } catch (error) { console.warn(error); universe = { symbols: ["SPY"] }; }
-  $("#modal-content").innerHTML = `<form id="random-bot-form"><div class="modal-head"><div><h3>Generate a sensible random bot</h3><p>BotGarden chooses from vetted strategy structures and keeps every order inside your risk budget.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">This creates a draft for paper trading. “Risk budget” is the maximum planned capital allocation, not a guarantee of maximum loss.</div><div class="form-grid"><label>Maximum allocation ($)<input name="risk" type="number" min="50" max="100000" step="10" value="500" required></label><label>Symbol<input name="symbol" value="SPY" maxlength="20" required></label><label>Asset class<select name="assetClass"><option value="equity">Stocks</option><option value="option">Stock options</option></select></label><label>Risk posture<select name="posture"><option value="conservative">Conservative</option><option value="balanced" selected>Balanced</option><option value="aggressive">Aggressive</option></select></label><label>Time horizon<select name="horizon"><option value="intraday" selected>Intraday</option><option value="swing">Swing</option></select></label><label>Trading session<select name="sessionPolicy"><option value="regular">Regular hours only</option><option value="extended">Include extended hours</option></select></label></div><div id="random-preview" class="random-preview"></div><p class="form-message" id="random-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="secondary" id="reroll-bot">Try another</button><button class="primary" type="submit">Save this draft</button></div></form>`;
+  $("#modal-content").innerHTML = `<form id="random-bot-form"><div class="modal-head"><div><h3>Generate a smarter random stock bot</h3><p>BotGarden pairs coherent signals with volatility-scaled exits and a bounded averaging schedule.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">Strategy families are weighted toward pullbacks, trends, and confirmed breakouts. The allocation is capped, averaging stays inside the protective stop, and every generated choice is recorded. Paper results are still uncertain.</div><div class="form-grid"><label>Maximum allocation ($)<input name="risk" type="number" min="50" max="100000" step="10" value="500" required></label><label>Symbol<input name="symbol" value="SPY" maxlength="20" required></label><label>Asset class<select name="assetClass"><option value="equity">Stocks</option><option value="option">Stock options</option></select></label><label>Risk posture<select name="posture"><option value="conservative">Conservative</option><option value="balanced" selected>Balanced</option><option value="aggressive">Aggressive</option></select></label><label>Time horizon<select name="horizon"><option value="intraday" selected>Intraday</option><option value="swing">Swing</option></select></label><label>Trading session<select name="sessionPolicy"><option value="regular">Regular hours only</option><option value="extended">Include extended hours</option></select></label></div><div id="random-preview" class="random-preview"></div><p class="form-message" id="random-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="secondary" id="reroll-bot">Try another</button><button class="primary" type="submit">Save this draft</button></div></form>`;
   modal.showModal();
   const form = $("#random-bot-form");
   form.elements.symbol.value = pick(universe.symbols);
@@ -392,17 +396,18 @@ async function showRandomBotForm() {
   const roll = () => {
     const data = new FormData(form); const posture = data.get("posture"); const horizon = data.get("horizon");
     const candidates = RANDOM_STRATEGIES.filter((strategy) => strategy.posture.includes(posture) && strategy.horizon.includes(horizon) && strategy.id !== selected?.id);
-    selected = randomizedStockStrategy(candidates[Math.floor(Math.random() * candidates.length)] || RANDOM_STRATEGIES[0]);
+    selected = randomizedStockStrategy(weightedPick(candidates) || RANDOM_STRATEGIES[0], posture, horizon, data.get("symbol"));
     const risk = Number(data.get("risk")); const schedule = randomSchedule(selected, risk);
     $("#random-preview").innerHTML = `<span class="eyebrow">CURATED + BOUNDED RANDOMIZATION</span><h3>${selected.name}</h3><p>${selected.description}</p><div class="random-stats"><div><span>Conditions</span><strong>${selected.conditions.length} joined with AND</strong></div><div><span>Orders</span><strong>${schedule.length}</strong></div><div><span>Take profit</span><strong>${pct(selected.takeProfit)}</strong></div><div><span>Stop loss</span><strong>${pct(selected.stopLoss)}</strong></div></div><div class="subtle">${selected.conditions.map((condition) => conditionDefinition(condition.type)[1]).join(" + ")}</div><div class="randomized-list">${Object.entries(selected.randomizedFields).map(([key, value]) => `<span><b>${escapeHtml(key)}:</b> ${escapeHtml(value)}</span>`).join("")}</div>`;
   };
   $("#reroll-bot").addEventListener("click", () => { form.elements.symbol.value = pick(universe.symbols); roll(); });
   form.querySelectorAll("select").forEach((field) => field.addEventListener("change", roll));
+  form.elements.symbol.addEventListener("change", roll);
   roll();
   form.addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.submitter; button.disabled = true;
     const data = new FormData(form); const risk = Number(data.get("risk")); const schedule = randomSchedule(selected, risk);
-    const payload = { user_id: session.user.id, name: `${data.get("symbol").toUpperCase().trim()} ${selected.name}`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: data.get("assetClass"), symbol: data.get("symbol").toUpperCase().trim(), direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, sizing_mode: "fixed" }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: data.get("horizon") === "intraday" ? 1800 : 86400, session_policy: data.get("sessionPolicy") };
+    const payload = { user_id: session.user.id, name: `${data.get("symbol").toUpperCase().trim()} ${selected.name}`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: data.get("assetClass"), symbol: data.get("symbol").toUpperCase().trim(), direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, volatility_model: selected.volatilityModel, sizing_mode: "fixed" }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: data.get("horizon") === "intraday" ? 1800 : 86400, session_policy: data.get("sessionPolicy") };
     const { data: bot, error } = await supabase.from("bg_bots").insert(payload).select().single();
     if (error) { $("#random-message").textContent = error.message; button.disabled = false; return; }
     const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
@@ -528,9 +533,10 @@ async function showRandomOptionBotForm() {
 }
 
 async function createBulkStockBot(symbols) {
-  const candidates = RANDOM_STRATEGIES.filter((strategy) => strategy.posture.includes("balanced") && strategy.horizon.includes("intraday"));
-  const selected = randomizedStockStrategy(pick(candidates)); const risk = 500; const schedule = randomSchedule(selected, risk); const symbol = pick(symbols);
-  const { data: bot, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: "equity", symbol, direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, sizing_mode: "fixed", bulk_generated: true }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: 1800, session_policy: "regular" }).select().single();
+  const postureRoll = Math.random(), posture = postureRoll < .25 ? "conservative" : postureRoll < .95 ? "balanced" : "aggressive";
+  const candidates = RANDOM_STRATEGIES.filter((strategy) => strategy.posture.includes(posture) && strategy.horizon.includes("intraday")), symbol = pick(symbols);
+  const selected = randomizedStockStrategy(weightedPick(candidates), posture, "intraday", symbol); const risk = 500; const schedule = randomSchedule(selected, risk);
+  const { data: bot, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: "equity", symbol, direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, volatility_model: selected.volatilityModel, sizing_mode: "fixed", bulk_generated: true }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: 1800, session_policy: "regular" }).select().single();
   if (error) throw error;
   const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
   if (stepError) { await supabase.from("bg_bots").delete().eq("id", bot.id); throw stepError; }
