@@ -1,49 +1,56 @@
 # BotGarden
 
-BotGarden is a no-build PWA for configuring and paper trading condition-driven DCA strategies through Alpaca. It uses the same deployment shape as Mayfly: static ES modules on GitHub Pages plus Supabase Auth, Postgres, RLS, and Edge Functions.
+BotGarden is a multi-user research and paper-trading portal for designing, generating, testing, comparing, and operating condition-driven stock and options strategies through Alpaca.
 
-## Included in this first slice
+**Live portal:** [jay23606.github.io/BotGarden](https://jay23606.github.io/BotGarden/)
 
-- Email/password sign-up and sign-in
-- Authenticated dashboard
-- Per-user Alpaca paper-account connection
-- Server-side validation and AES-GCM encryption of Alpaca credentials
-- DCA bot form with a live averaging-order/capital preview
-- `bg_`-prefixed Postgres schema and row-level security
-- Draft bot persistence
+**Research paper:** [jay23606.github.io/BotGarden/paper.html](https://jay23606.github.io/BotGarden/paper.html)
 
-This version intentionally saves bots as drafts. It does not submit orders yet.
+BotGarden combines a static GitHub Pages interface with Supabase Auth, Postgres, row-level security, scheduled Edge Functions, and per-user Alpaca paper credentials. It is a research environment—not investment advice and not evidence that any generated strategy will be profitable.
 
-## Setup
+## Current capabilities
 
-1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL editor.
-3. Copy the project URL and publishable/anon key into `config.js`.
-4. In Supabase Authentication, enable Email, turn off **Confirm email**, and add the deployed URL to the redirect allow list.
-5. Generate a 32-byte encryption key and save its base64 form as an Edge Function secret named `BG_CREDENTIALS_KEY`.
-6. Deploy the function:
+- Email/password accounts with per-user data isolation
+- Encrypted connection of each user's Alpaca paper account
+- Stock and option bot creation with one to three composable start conditions
+- Bounded random strategy generation using coherent parameter families
+- Configurable bulk generation, defaulting to 15 stock and 10 option bots
+- Liquid-symbol selection rather than a fixed SPY-only universe
+- Defined-risk credit spreads, debit spreads, and long-option strategies
+- Stock backtests using Alpaca historical IEX bars
+- Explicitly labeled, low-confidence option replay estimates
+- Market-regime and volatility context for historical tests
+- Per-row underlying-price sparklines and cumulative result ranking
+- Randomized parent/child strategy experiments with matched test coverage
+- Immediate individual deletion and bulk pruning below a selected 2% rule
+- ON/OFF paper-execution controls
+- Five-minute scheduled evaluation and per-bot decision explanations
+- Atomic multi-leg option entries and coordinated option exits
+- Superuser exemption from the ordinary worker bot-count cap
 
-   ```sh
-   supabase functions deploy alpaca-connection
-   supabase functions deploy paper-runner --no-verify-jwt
-   ```
+## Architecture
 
-7. Serve locally with any static server or publish the repository through GitHub Pages.
+- **Frontend:** static HTML, CSS, and JavaScript ES modules on GitHub Pages
+- **Identity and storage:** Supabase Auth and Postgres with `bg_`-prefixed tables and RLS
+- **Server-side services:** Deno/TypeScript Supabase Edge Functions
+- **Scheduling:** Supabase Cron invokes the paper runner every five minutes
+- **Broker and data provider:** Alpaca paper-trading and market-data APIs
+- **Credential handling:** paper keys are encrypted server-side with AES-GCM and never returned to the browser
 
-Generate the credential key in a browser console or Deno:
+## Research limitations
 
-```js
-const b = crypto.getRandomValues(new Uint8Array(32));
-btoa(String.fromCharCode(...b));
-```
+Paper trading is simulated and does not reproduce every source of live execution friction. Stock tests use the IEX feed available to Alpaca Basic accounts rather than the consolidated SIP feed. Option replay estimates are derived from underlying-price movement, configured delta, modeled decay, payoff bounds, and liquidity haircuts; they are not reconstructions from historical option-chain quotes. Complete automated stock-position exit management remains a development priority.
 
-Never commit the generated key, Supabase service-role key, or any Alpaca credentials.
+See the [BotGarden research paper](https://jay23606.github.io/BotGarden/paper.html) for the methodology, design rationale, threat model, and limitations.
 
-## Next implementation slice
+## Deployment
 
-- Bot detail and edit pages
-- Structured start-condition builder
-- Paper execution Edge Function and idempotent order submission
-- Alpaca order/fill synchronization
-- Broker fill reconciliation and richer live position analytics
-- Equity curve, P&L, drawdown, and comparison views
+1. Create a Supabase project and apply `supabase/schema.sql` plus the migrations in `supabase/migrations`.
+2. Add the project URL and publishable key to `config.js`.
+3. Configure Supabase Authentication and the deployed redirect URL.
+4. Create a 32-byte encryption key and save it as the Edge Function secret `BG_CREDENTIALS_KEY`.
+5. Deploy the functions in `supabase/functions`.
+6. Configure the runner secret and apply the scheduled-runner migration.
+7. Publish the repository with GitHub Pages.
+
+Never commit the encryption key, Supabase service-role key, runner secret, or Alpaca credentials.

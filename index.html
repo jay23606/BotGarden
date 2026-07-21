@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#15382c">
+  <meta name="description" content="BotGarden is a condition-driven stock and options paper-trading laboratory with randomized strategy generation, historical testing, Alpaca execution, and transparent decision logs.">
   <title>BotGarden — Paper trading strategies</title>
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css?v=20260721-16">
-  <link rel="stylesheet" href="conditions.css?v=20260721-22">
+  <link rel="stylesheet" href="conditions.css?v=20260721-23">
 </head>
 <body>
   <div id="setup-banner" class="setup-banner hidden">Add your Supabase URL and publishable key to <code>config.js</code> to enable sign-in.</div>
@@ -23,7 +24,7 @@
         <h1>Test the strategy.<br><em>Keep the capital.</em></h1>
         <p>Build condition-driven DCA strategies for stocks and options, then run them against your Alpaca paper account.</p>
       </div>
-      <div class="brand-foot">Alpaca paper trading · Your keys stay private</div>
+      <div class="brand-foot">Alpaca paper trading · Your keys stay private · <a href="paper.html">Read the research paper</a></div>
     </section>
     <section class="auth-panel">
       <form id="auth-form" class="auth-card">
@@ -47,6 +48,7 @@
         <button class="nav-item" data-view="bots">Bots</button>
         <button class="nav-item" data-view="activity">Activity</button>
         <button class="nav-item" data-view="settings">Settings</button>
+        <a class="nav-item nav-link" href="paper.html">Research paper</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="paper-pill"><span></span> Paper trading</div>
@@ -63,6 +65,6 @@
   </div>
 
   <dialog id="modal"><div id="modal-content"></div></dialog>
-  <script type="module" src="app.js?v=20260721-22"></script>
+  <script type="module" src="app.js?v=20260721-23"></script>
 </body>
 </html>
