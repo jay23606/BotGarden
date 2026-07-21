@@ -23,7 +23,7 @@ BotGarden combines a static GitHub Pages interface with Supabase Auth, Postgres,
 - Per-row underlying-price sparklines and cumulative result ranking
 - Ticker intelligence with risk metrics, liquidity measures, asset flags, and recent Alpaca news
 - Randomized parent/child strategy experiments with matched test coverage
-- Immediate individual deletion and bulk pruning below a selected 2% rule
+- Immediate individual deletion and bulk pruning of bots below 2%, not tested, or lacking an option estimate
 - ON/OFF paper-execution controls
 - Five-minute scheduled evaluation and per-bot decision explanations
 - Atomic multi-leg option entries and coordinated option exits

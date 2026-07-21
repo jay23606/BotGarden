@@ -166,7 +166,7 @@ function botsBelowThreshold(threshold = 2) {
   return bots.filter((bot) => {
     const summary = backtestSummary.get(bot.id);
     const result = bot.asset_class === "option" ? summary?.estimatedPct : summary?.profitPct;
-    return result != null && Number.isFinite(result) && result < threshold;
+    return result == null || !Number.isFinite(result) || result < threshold;
   });
 }
 
@@ -174,8 +174,8 @@ function updatePruneButton() {
   const button = $("#prune-bots"); if (!button) return;
   const count = botsBelowThreshold().length;
   button.disabled = count === 0;
-  button.textContent = count ? `Remove under 2% (${count})` : "Remove under 2%";
-  button.title = count ? `Immediately remove ${count} tested bot${count === 1 ? "" : "s"} with a cumulative return below 2%` : "No tested bots are currently below 2%";
+  button.textContent = count ? `Remove <2% + untested (${count})` : "Remove <2% + untested";
+  button.title = count ? `Immediately remove ${count} bot${count === 1 ? "" : "s"} below 2%, not tested, or without an option estimate` : "No bots are below 2%, untested, or missing an option estimate";
 }
 
 async function pruneUnderperformingBots() {
