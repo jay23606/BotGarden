@@ -32,6 +32,7 @@
 .delete-button{border:1px solid #efd4d4;border-radius:9px;background:#fff7f7;color:var(--danger);padding:7px 10px;font-size:18px;line-height:1}
 .danger-button{border:0;border-radius:10px;background:var(--danger);color:white;padding:11px 17px;font-weight:700}
 .delete-warning{padding:16px;border:1px solid #efd4d4;border-radius:10px;background:#fff7f7;color:#7c2929;font-size:13px}
+.runner-note{max-width:650px;margin-top:9px;padding:10px 13px;border-radius:9px;background:#fff4d7;color:#6d5416;font-size:11px}
 .detail-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .detail-grid div,.backtest-result div{padding:13px;border:1px solid var(--line);border-radius:10px;background:#f8faf8}
 .detail-grid span,.backtest-result span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}

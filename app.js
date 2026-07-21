@@ -89,6 +89,7 @@ async function loadDashboard() {
     </div>
     <div class="section-head"><h3>Alpaca paper account</h3></div>
     <div class="card connection-card"><div class="connection-state"><div><span class="connection-dot ${connection?.status === "connected" ? "on" : ""}"></span><strong>${connection ? "Alpaca connected" : "Not connected"}</strong><div class="subtle">${connection ? `Paper account ${escapeHtml(connection.account_number || "")}` : "Add your own Alpaca paper API credentials."}</div></div><button class="secondary" data-connect>${connection ? "Reconnect" : "Connect account"}</button></div></div>
+    <div class="runner-note"><strong>Paper execution worker not enabled yet.</strong> ON bots are armed and ready for the upcoming scheduled runner, but they do not submit orders yet.</div>
     <div class="section-head"><h3>Recent bots</h3></div>${renderBots()}`;
 }
 
