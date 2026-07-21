@@ -30,6 +30,7 @@
 .bot-toggle.on span{background:#3ca66c;box-shadow:0 0 0 3px rgba(60,166,108,.13)}
 .profit{color:#188653}.loss{color:var(--danger)}
 .signal-only{color:#8a6412}
+.bot-groups{display:grid;gap:30px}.group-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:4px 0 10px}.group-heading h3{margin:0;font-size:19px}.group-heading p{margin:4px 0 0;color:var(--muted);font-size:12px}.option-explainer{padding:13px 15px;border:1px solid #eadcad;border-radius:10px;background:#fff9e8;color:#6d5416;font-size:12px;line-height:1.5}
 .delete-button{border:1px solid #efd4d4;border-radius:9px;background:#fff7f7;color:var(--danger);padding:7px 10px;font-size:18px;line-height:1}
 .danger-button{border:0;border-radius:10px;background:var(--danger);color:white;padding:11px 17px;font-weight:700}
 .delete-warning{padding:16px;border:1px solid #efd4d4;border-radius:10px;background:#fff7f7;color:#7c2929;font-size:13px}
