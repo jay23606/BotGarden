@@ -62,7 +62,7 @@ document.addEventListener("click", (event) => {
   const details = event.target.closest("[data-bot-details]"); if (details) showBotDetails(details.dataset.botDetails);
   const backtest = event.target.closest("[data-backtest]"); if (backtest) showBacktestForm(backtest.dataset.backtest);
   const toggle = event.target.closest("[data-toggle-bot]"); if (toggle) toggleBot(toggle.dataset.toggleBot);
-  const remove = event.target.closest("[data-delete-bot]"); if (remove) showDeleteBot(remove.dataset.deleteBot);
+  const remove = event.target.closest("[data-delete-bot]"); if (remove) deleteBot(remove.dataset.deleteBot, remove);
   if (event.target.closest("[data-close-modal]")) modal.close();
 });
 
@@ -108,11 +108,8 @@ async function toggleBot(botId) {
   if (!error) await loadDashboard();
 }
 
-function showDeleteBot(botId) {
-  const bot = bots.find((item) => item.id === botId); if (!bot) return;
-  $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Remove bot?</h3><p>${escapeHtml(bot.name)}</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="delete-warning">This permanently removes the bot, its configuration, backtests, trades, and event history.</div><p class="form-message" id="delete-message"></p></div><div class="modal-foot"><button class="secondary" data-close-modal>Cancel</button><button class="danger-button" id="confirm-delete">Remove bot</button></div>`;
-  modal.showModal();
-  $("#confirm-delete").addEventListener("click", async (event) => { event.currentTarget.disabled = true; const { error } = await supabase.from("bg_bots").delete().eq("id", botId); if (error) { $("#delete-message").textContent = error.message; event.currentTarget.disabled = false; return; } modal.close(); await loadDashboard(); });
+async function deleteBot(botId, button) {
+  button.disabled = true; const { error } = await supabase.from("bg_bots").delete().eq("id", botId); if (error) { button.disabled = false; console.error("Bot removal failed", error); return; } await loadDashboard();
 }
 
 function formatDuration(seconds) {
@@ -301,6 +298,8 @@ const RANDOM_STRATEGIES = [
 ];
 
 const pick = (values) => values[Math.floor(Math.random() * values.length)];
+let liquidUniverse = null;
+async function getLiquidUniverse() { if (!liquidUniverse) liquidUniverse = await invoke("liquid-symbols", {}); return liquidUniverse; }
 const randomStep = (min, max, step) => Number((min + Math.floor(Math.random() * (Math.floor((max - min) / step) + 1)) * step).toFixed(4));
 
 function randomizeCondition(condition) {
@@ -349,10 +348,12 @@ async function autoBacktestTwoMonths(botId) {
   return results;
 }
 
-function showRandomBotForm() {
+async function showRandomBotForm() {
+  let universe; try { universe = await getLiquidUniverse(); } catch (error) { console.warn(error); universe = { symbols: ["SPY"] }; }
   $("#modal-content").innerHTML = `<form id="random-bot-form"><div class="modal-head"><div><h3>Generate a sensible random bot</h3><p>BotGarden chooses from vetted strategy structures and keeps every order inside your risk budget.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">This creates a draft for paper trading. “Risk budget” is the maximum planned capital allocation, not a guarantee of maximum loss.</div><div class="form-grid"><label>Maximum allocation ($)<input name="risk" type="number" min="50" max="100000" step="10" value="500" required></label><label>Symbol<input name="symbol" value="SPY" maxlength="20" required></label><label>Asset class<select name="assetClass"><option value="equity">Stocks</option><option value="option">Stock options</option></select></label><label>Risk posture<select name="posture"><option value="conservative">Conservative</option><option value="balanced" selected>Balanced</option><option value="aggressive">Aggressive</option></select></label><label>Time horizon<select name="horizon"><option value="intraday" selected>Intraday</option><option value="swing">Swing</option></select></label><label>Trading session<select name="sessionPolicy"><option value="regular">Regular hours only</option><option value="extended">Include extended hours</option></select></label></div><div id="random-preview" class="random-preview"></div><p class="form-message" id="random-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="secondary" id="reroll-bot">Try another</button><button class="primary" type="submit">Save this draft</button></div></form>`;
   modal.showModal();
   const form = $("#random-bot-form");
+  form.elements.symbol.value = pick(universe.symbols);
   const randomOptionChoice = form.querySelector('[name="assetClass"] option[value="option"]');
   randomOptionChoice.disabled = true;
   randomOptionChoice.textContent = "Stock options — contract selector coming next";
@@ -364,7 +365,7 @@ function showRandomBotForm() {
     const risk = Number(data.get("risk")); const schedule = randomSchedule(selected, risk);
     $("#random-preview").innerHTML = `<span class="eyebrow">CURATED + BOUNDED RANDOMIZATION</span><h3>${selected.name}</h3><p>${selected.description}</p><div class="random-stats"><div><span>Conditions</span><strong>${selected.conditions.length} joined with AND</strong></div><div><span>Orders</span><strong>${schedule.length}</strong></div><div><span>Take profit</span><strong>${pct(selected.takeProfit)}</strong></div><div><span>Stop loss</span><strong>${pct(selected.stopLoss)}</strong></div></div><div class="subtle">${selected.conditions.map((condition) => conditionDefinition(condition.type)[1]).join(" + ")}</div><div class="randomized-list">${Object.entries(selected.randomizedFields).map(([key, value]) => `<span><b>${escapeHtml(key)}:</b> ${escapeHtml(value)}</span>`).join("")}</div>`;
   };
-  $("#reroll-bot").addEventListener("click", roll);
+  $("#reroll-bot").addEventListener("click", () => { form.elements.symbol.value = pick(universe.symbols); roll(); });
   form.querySelectorAll("select").forEach((field) => field.addEventListener("change", roll));
   roll();
   form.addEventListener("submit", async (event) => {
@@ -458,10 +459,11 @@ function randomizedOptionStrategy(template, posture) {
   next.randomizedFields = randomized; return next;
 }
 
-function showRandomOptionBotForm() {
+async function showRandomOptionBotForm() {
+  let universe; try { universe = await getLiquidUniverse(); } catch (error) { console.warn(error); universe = { optionSymbols: ["SPY"] }; }
   $("#modal-content").innerHTML = `<form id="random-option-form"><div class="modal-head"><div><h3>Generate a random option strategy</h3><p>Choose a strategy family, then get coherent randomized entry and exit rules.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">Historical tests measure underlying entry signals and market context; they do not estimate option P&amp;L.</div><div class="form-grid"><label>Strategy family<select name="strategyFamily"><option value="credit_spread" selected>Credit spread (default)</option><option value="debit_spread">Debit spread</option><option value="long_option">Long call or put</option></select></label><label>Maximum risk ($)<input name="risk" type="number" min="25" max="100000" step="25" value="500" required></label><label>Underlying symbol<input name="symbol" value="SPY" maxlength="10" required></label><label>Market bias<select name="bias"><option value="either">Surprise me</option><option value="bullish">Bullish</option><option value="bearish">Bearish</option></select></label><label>Risk posture<select name="posture"><option value="conservative">Conservative</option><option value="balanced" selected>Balanced</option><option value="aggressive">Aggressive</option></select></label><label>Expiration window<select name="dte"><option value="30,45" selected>30–45 days</option><option value="21,35">21–35 days</option><option value="45,60">45–60 days</option></select></label><label id="option-width-label">Spread width ($)<select name="width"><option value="2.5">$2.50</option><option value="5" selected>$5.00</option><option value="10">$10.00</option></select></label><label><span id="option-premium-label">Minimum entry credit ($)</span><input name="premium" type="number" min="0.05" step="0.05" value="1.00" required></label><label>Maximum bid/ask spread (%)<input name="maxSpread" type="number" min="1" max="100" step="1" value="15" required></label><label>Close profit at (%)<input name="profitClose" type="number" min="5" max="95" value="50" required></label><label>Exit before expiration (DTE)<input name="exitDte" type="number" min="0" max="30" value="7" required></label></div><div id="option-preview" class="random-preview"></div><p class="form-message" id="option-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="secondary" id="reroll-option">Try another</button><button class="primary" id="save-option" type="submit">Save this draft</button></div></form>`;
   modal.showModal();
-  const form = $("#random-option-form"); let selected = null;
+  const form = $("#random-option-form"); form.elements.symbol.value = pick(universe.optionSymbols?.length ? universe.optionSymbols : ["SPY"]); let selected = null;
   const render = (reroll = false) => {
     const data = new FormData(form); const bias = data.get("bias"); const family = data.get("strategyFamily");
     const candidates = OPTION_STRATEGIES.filter((strategy) => strategy.family === family && (bias === "either" || strategy.bias === bias) && (!reroll || strategy.id !== selected?.id));
@@ -478,7 +480,7 @@ function showRandomOptionBotForm() {
     $("#option-preview").innerHTML = `<span class="eyebrow">DEFINED RISK + BOUNDED RANDOMIZATION</span><h3>${selected.name}</h3><p>${selected.description}</p><div class="random-stats"><div><span>Target delta</span><strong>${delta.toFixed(2)}</strong></div><div><span>Contracts</span><strong>${contracts || "—"}</strong></div><div><span>Estimated max loss</span><strong>${valid ? money(totalRisk) : "—"}</strong></div><div><span>Maximum profit</span><strong>${valid ? maxProfit : "—"}</strong></div></div><div class="subtle">${structures[selected.spreadType]} · ${selected.conditions.map((condition) => conditionDefinition(condition.type)[1]).join(" + ")}</div><div class="randomized-list">${Object.entries(selected.randomizedFields).map(([key, value]) => `<span><b>${escapeHtml(key)}:</b> ${escapeHtml(value)}</span>`).join("")}</div>`;
     return { family, risk, width, premium, contracts, totalRisk, delta };
   };
-  $("#reroll-option").addEventListener("click", () => render(true));
+  $("#reroll-option").addEventListener("click", () => { form.elements.symbol.value = pick(universe.optionSymbols?.length ? universe.optionSymbols : ["SPY"]); render(true); });
   form.addEventListener("input", () => render(false)); render(true);
   form.addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.submitter; button.disabled = true; const values = render(false); const data = new FormData(form);
@@ -494,9 +496,9 @@ function showRandomOptionBotForm() {
   });
 }
 
-async function createBulkStockBot() {
+async function createBulkStockBot(symbols) {
   const candidates = RANDOM_STRATEGIES.filter((strategy) => strategy.posture.includes("balanced") && strategy.horizon.includes("intraday"));
-  const selected = randomizedStockStrategy(pick(candidates)); const risk = 500; const schedule = randomSchedule(selected, risk); const symbol = "SPY";
+  const selected = randomizedStockStrategy(pick(candidates)); const risk = 500; const schedule = randomSchedule(selected, risk); const symbol = pick(symbols);
   const { data: bot, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: "equity", symbol, direction: "long", max_allocation: risk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: selected.randomizedFields, sizing_mode: "fixed", bulk_generated: true }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: 1800, session_policy: "regular" }).select().single();
   if (error) throw error;
   const { error: stepError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: bot.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount })));
@@ -504,12 +506,12 @@ async function createBulkStockBot() {
   return bot;
 }
 
-async function createBulkOptionBot(index) {
+async function createBulkOptionBot(index, symbols) {
   const families = ["credit_spread", "debit_spread", "long_option", "credit_spread", "debit_spread"];
   const family = families[index % families.length]; const bias = Math.random() < .5 ? "bullish" : "bearish";
   const selected = randomizedOptionStrategy(pick(OPTION_STRATEGIES.filter((strategy) => strategy.family === family && strategy.bias === bias)), "balanced");
   const risk = 500, width = family === "long_option" ? 0 : 5, premium = family === "credit_spread" ? randomStep(.75, 1.5, .05) : family === "debit_spread" ? randomStep(1.5, 2.5, .05) : randomStep(2.5, 4.5, .05);
-  const riskPerContract = (family === "credit_spread" ? width - premium : premium) * 100, contracts = Math.max(1, Math.floor(risk / riskPerContract)), totalRisk = contracts * riskPerContract, symbol = "SPY";
+  const riskPerContract = (family === "credit_spread" ? width - premium : premium) * 100, contracts = Math.max(1, Math.floor(risk / riskPerContract)), totalRisk = contracts * riskPerContract, symbol = pick(symbols);
   const { data: bot, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${symbol} ${selected.name}`, bot_type: "option_strategy", status: "active", broker: "alpaca", environment: "paper", asset_class: "option", symbol, direction: bias === "bullish" ? "long" : "short", max_allocation: totalRisk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, randomized_fields: { ...selected.randomizedFields, "Strategy family": family.replaceAll("_", " "), "Target premium": money(premium) }, bulk_generated: true }, take_profit_pct: 50, stop_loss_pct: null, cooldown_seconds: 86400, session_policy: "regular" }).select().single();
   if (error) throw error;
   const { error: spreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: bot.id, spread_type: selected.spreadType, strategy_family: family, premium_type: family === "credit_spread" ? "credit" : "debit", min_dte: 30, max_dte: 45, short_delta_target: selected.delta, target_width: width, minimum_credit: premium, target_premium: premium, max_bid_ask_pct: 15, contracts, max_risk: totalRisk, profit_close_pct: 50, loss_close_multiple: selected.lossCloseMultiple, exit_dte: 7 });
@@ -520,13 +522,15 @@ async function createBulkOptionBot(index) {
 function showBulkRandomForm() {
   $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Create 10 random bots</h3><p>Five stock bots and five mixed option strategies, each automatically tested across the previous 60 days.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="callout">The option mix includes two credit spreads, two debit spreads, and one long call or put. Defaults: SPY, balanced risk, up to $500 risk, regular hours, and ON.</div><div class="bulk-summary"><div><strong>5</strong><span>Random stock bots</span></div><div><strong>5</strong><span>Mixed option strategies</span></div><div><strong>60d</strong><span>Automatic coverage each</span></div></div><div id="bulk-progress" class="bulk-progress"><span></span><strong>Ready to create</strong></div><p class="form-message" id="bulk-message"></p></div><div class="modal-foot"><button class="secondary" data-close-modal>Cancel</button><button class="primary" id="confirm-bulk">Create and test 10</button></div>`;
   modal.showModal();
+  $("#modal-content .callout").textContent = "Each bot gets a random ticker from the weekly-volume top 100; option bots use optionable names. The batch includes two credit spreads, two debit spreads, and one long call or put, with up to $500 risk per bot.";
   $("#confirm-bulk").addEventListener("click", async (event) => {
     const button = event.currentTarget; button.disabled = true; let completed = 0, failures = 0;
+    let universe; try { universe = await getLiquidUniverse(); } catch (error) { universe = { symbols: ["SPY"], optionSymbols: ["SPY"] }; }
     const update = (message) => { const progress = completed / 10 * 100; $("#bulk-progress span").style.width = `${progress}%`; $("#bulk-progress strong").textContent = message; };
     for (let index = 0; index < 10; index++) {
       try {
         update(`Creating ${index < 5 ? "stock" : "option"} bot ${index + 1} of 10…`);
-        const bot = index < 5 ? await createBulkStockBot() : await createBulkOptionBot(index - 5);
+        const bot = index < 5 ? await createBulkStockBot(universe.symbols) : await createBulkOptionBot(index - 5, universe.optionSymbols?.length ? universe.optionSymbols : ["SPY"]);
         update(`Backtesting ${bot.name}…`); await autoBacktestTwoMonths(bot.id);
       } catch (error) { failures++; console.warn("Bulk bot creation failed", error); }
       completed++; update(`${completed} of 10 complete`);
