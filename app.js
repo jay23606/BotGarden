@@ -9,6 +9,7 @@ let session = null;
 let authMode = "signin";
 let bots = [];
 let backtestSummary = new Map();
+let latestBacktest = new Map();
 
 if (!configured) $("#setup-banner").classList.remove("hidden");
 
@@ -62,6 +63,7 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-connect]")) showConnectionForm();
   const details = event.target.closest("[data-bot-details]"); if (details) showBotDetails(details.dataset.botDetails);
   const backtest = event.target.closest("[data-backtest]"); if (backtest) showBacktestForm(backtest.dataset.backtest);
+  const child = event.target.closest("[data-child-bot]"); if (child) createRandomChild(child.dataset.childBot, child);
   const toggle = event.target.closest("[data-toggle-bot]"); if (toggle) toggleBot(toggle.dataset.toggleBot);
   const remove = event.target.closest("[data-delete-bot]"); if (remove) deleteBot(remove.dataset.deleteBot, remove);
   if (event.target.closest("[data-close-modal]")) modal.close();
@@ -76,10 +78,11 @@ async function loadDashboard() {
   const [{ data: botData }, connection, { data: backtests }] = await Promise.all([
     supabase.from("bg_bots").select("id,name,bot_type,status,asset_class,symbol,direction,max_allocation,max_active_trades,start_condition,take_profit_pct,stop_loss_pct,cooldown_seconds,session_policy,created_at").order("created_at", { ascending: false }),
     getConnection(),
-    supabase.from("bg_backtests").select("bot_id,status,duration_seconds,initial_capital,net_pnl,return_pct,signal_count,estimated_pnl,estimated_return_pct,created_at").in("status", ["completed", "signal_only"]),
+    supabase.from("bg_backtests").select("bot_id,status,duration_seconds,initial_capital,net_pnl,return_pct,signal_count,estimated_pnl,estimated_return_pct,daily_regimes,start_at,end_at,created_at").in("status", ["completed", "signal_only"]),
   ]);
   backtestSummary = new Map();
-  (backtests || []).forEach((test) => { const current = backtestSummary.get(test.bot_id) || { seconds: 0, runs: 0, signalOnlyRuns: 0, signals: 0, pnl: 0, capital: 0, profitPct: null, estimatedPnl: 0, estimatedCapital: 0, estimatedPct: null }; current.seconds += Number(test.duration_seconds); current.runs++; if (test.status === "signal_only") { current.signalOnlyRuns++; current.signals += Number(test.signal_count || 0); if (test.estimated_pnl != null) { current.estimatedPnl += Number(test.estimated_pnl); current.estimatedCapital += Number(test.initial_capital); current.estimatedPct = current.estimatedPnl / current.estimatedCapital * 100; } } if (test.net_pnl != null) { current.pnl += Number(test.net_pnl); current.capital += Number(test.initial_capital); current.profitPct = current.capital ? current.pnl / current.capital * 100 : null; } backtestSummary.set(test.bot_id, current); });
+  latestBacktest = new Map();
+  (backtests || []).forEach((test) => { const current = backtestSummary.get(test.bot_id) || { seconds: 0, runs: 0, signalOnlyRuns: 0, signals: 0, pnl: 0, capital: 0, profitPct: null, estimatedPnl: 0, estimatedCapital: 0, estimatedPct: null }; current.seconds += Number(test.duration_seconds); current.runs++; if (test.status === "signal_only") { current.signalOnlyRuns++; current.signals += Number(test.signal_count || 0); if (test.estimated_pnl != null) { current.estimatedPnl += Number(test.estimated_pnl); current.estimatedCapital += Number(test.initial_capital); current.estimatedPct = current.estimatedPnl / current.estimatedCapital * 100; } } if (test.net_pnl != null) { current.pnl += Number(test.net_pnl); current.capital += Number(test.initial_capital); current.profitPct = current.capital ? current.pnl / current.capital * 100 : null; } backtestSummary.set(test.bot_id, current); const latest = latestBacktest.get(test.bot_id); if (!latest || new Date(test.created_at) > new Date(latest.created_at)) latestBacktest.set(test.bot_id, test); });
   bots = (botData || []).sort((a, b) => { const aProfit = backtestSummary.get(a.id)?.profitPct, bProfit = backtestSummary.get(b.id)?.profitPct; if (aProfit != null || bProfit != null) return (bProfit ?? -Infinity) - (aProfit ?? -Infinity); return new Date(b.created_at) - new Date(a.created_at); });
   updatePruneButton();
   const active = bots.filter((b) => b.status === "active").length;
@@ -96,10 +99,32 @@ async function loadDashboard() {
     <div class="section-head"><h3>Recent bots</h3></div>${renderBots()}`;
 }
 
+function actionIcon(name) {
+  const paths = { details: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>`, test: `<path d="M4 19V9M10 19V4M16 19v-7M22 19H2"/>`, child: `<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.5 6H12a4 4 0 0 1 4 4v5.5M12 3v6M9 6h6"/>` };
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`;
+}
+
+function stockSparkline(bot) {
+  const test = latestBacktest.get(bot.id), days = test?.daily_regimes || [];
+  if (!days.length) return `<div class="sparkline-placeholder" title="Run a backtest or replay to chart the underlying">No chart yet</div>`;
+  const closesAvailable = days.every((day) => Number.isFinite(Number(day.close_price))), values = [closesAvailable ? Number(days[0].open_price || days[0].close_price) : 100];
+  days.forEach((day) => values.push(closesAvailable ? Number(day.close_price) : values.at(-1) * (1 + Number(day.return_pct || 0) / 100)));
+  const width = 104, height = 34, min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
+  const points = values.map((value, index) => `${(index / Math.max(1, values.length - 1) * width).toFixed(1)},${(height - 3 - (value - min) / span * (height - 6)).toFixed(1)}`).join(" ");
+  const change = (values.at(-1) / values[0] - 1) * 100, color = change >= 0 ? "#188653" : "#a33a3a", label = `${days.length}D ${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
+  return `<div class="sparkline" title="${escapeHtml(bot.symbol)} underlying performance over the latest ${days.length}-market-day test"><svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><line x1="0" y1="${height - 3}" x2="${width}" y2="${height - 3}"/><polyline points="${points}" style="stroke:${color}"/></svg><span style="color:${color}">${label}</span></div>`;
+}
+
 function renderBots() {
   if (!bots.length) return `<div class="empty"><h3>No bots yet</h3><div>Create a DCA bot and preview its complete averaging schedule.</div><button class="primary" data-new-bot>Create your first bot</button></div>`;
-  const row = (bot, isOption) => { const summary = backtestSummary.get(bot.id) || { seconds: 0, runs: 0, signalOnlyRuns: 0, signals: 0, profitPct: null, estimatedPct: null }; const isOn = bot.status === "active"; const performance = isOption ? (summary.estimatedPct == null ? (summary.signalOnlyRuns ? "No estimate" : "Not tested") : `~${pct(summary.estimatedPct)}`) : (summary.profitPct == null ? "Not tested" : pct(summary.profitPct)); const coverage = isOption ? `${summary.signals} triggers · ${formatDuration(summary.seconds)}${summary.estimatedPct == null ? "" : " · low confidence"}` : `${formatDuration(summary.seconds)} · ${summary.runs} run${summary.runs === 1 ? "" : "s"}`; return `<div class="bot-row"><div><div class="bot-name">${escapeHtml(bot.name)}</div><div class="subtle">${escapeHtml(bot.symbol)} · ${escapeHtml(bot.bot_type.replaceAll("_", " "))}</div></div><button class="bot-toggle ${isOn ? "on" : ""}" data-toggle-bot="${bot.id}" role="switch" aria-checked="${isOn}"><span></span>${isOn ? "ON" : "OFF"}</button><div><div class="subtle">${isOption ? "ESTIMATED REPLAY" : "BACKTEST PROFIT"}</div><strong class="${isOption && summary.estimatedPct > 0 ? "profit" : isOption && summary.estimatedPct < 0 ? "loss" : !isOption && summary.profitPct > 0 ? "profit" : !isOption && summary.profitPct < 0 ? "loss" : ""}">${performance}</strong><div class="subtle">${coverage}</div></div><div><div class="subtle">MAX ${isOption ? "RISK" : "ALLOCATION"}</div>${money(bot.max_allocation)}</div><div class="row-actions"><button class="secondary" data-bot-details="${bot.id}">Details</button><button class="primary" data-backtest="${bot.id}">${isOption ? "Replay" : "Backtest"}</button><button class="delete-button" data-delete-bot="${bot.id}" aria-label="Delete ${escapeHtml(bot.name)}">×</button></div></div>`; };
-  const stocks = bots.filter((bot) => bot.asset_class !== "option"); const options = bots.filter((bot) => bot.asset_class === "option").sort((a, b) => (backtestSummary.get(b.id)?.estimatedPct ?? -Infinity) - (backtestSummary.get(a.id)?.estimatedPct ?? -Infinity));
+  const row = (bot, isOption) => {
+    const summary = backtestSummary.get(bot.id) || { seconds: 0, runs: 0, signalOnlyRuns: 0, signals: 0, profitPct: null, estimatedPct: null }, isOn = bot.status === "active";
+    const performance = isOption ? (summary.estimatedPct == null ? (summary.signalOnlyRuns ? "No estimate" : "Not tested") : `~${pct(summary.estimatedPct)}`) : (summary.profitPct == null ? "Not tested" : pct(summary.profitPct));
+    const coverage = isOption ? `${summary.signals} triggers · ${formatDuration(summary.seconds)}${summary.estimatedPct == null ? "" : " · low confidence"}` : `${formatDuration(summary.seconds)} · ${summary.runs} run${summary.runs === 1 ? "" : "s"}`;
+    const performanceClass = isOption ? (summary.estimatedPct > 0 ? "profit" : summary.estimatedPct < 0 ? "loss" : "") : (summary.profitPct > 0 ? "profit" : summary.profitPct < 0 ? "loss" : "");
+    return `<div class="bot-row"><div><div class="bot-name">${escapeHtml(bot.name)}</div><div class="subtle">${escapeHtml(bot.symbol)} · ${escapeHtml(bot.bot_type.replaceAll("_", " "))}</div></div><button class="bot-toggle ${isOn ? "on" : ""}" data-toggle-bot="${bot.id}" role="switch" aria-checked="${isOn}"><span></span>${isOn ? "ON" : "OFF"}</button><div><div class="subtle">${isOption ? "ESTIMATED REPLAY" : "BACKTEST PROFIT"}</div><strong class="${performanceClass}">${performance}</strong><div class="subtle">${coverage}</div></div>${stockSparkline(bot)}<div><div class="subtle">MAX ${isOption ? "RISK" : "ALLOCATION"}</div>${money(bot.max_allocation)}</div><div class="row-actions"><button class="icon-action" data-bot-details="${bot.id}" title="View bot details" aria-label="View details for ${escapeHtml(bot.name)}">${actionIcon("details")}</button><button class="icon-action test" data-backtest="${bot.id}" title="${isOption ? "Replay" : "Backtest"} this bot" aria-label="${isOption ? "Replay" : "Backtest"} ${escapeHtml(bot.name)}">${actionIcon("test")}</button><button class="icon-action child" data-child-bot="${bot.id}" title="Add a randomized child and test it over the same number of days" aria-label="Add random child of ${escapeHtml(bot.name)}">${actionIcon("child")}</button><button class="delete-button" data-delete-bot="${bot.id}" title="Remove bot" aria-label="Delete ${escapeHtml(bot.name)}">×</button></div></div>`;
+  };
+  const stocks = bots.filter((bot) => bot.asset_class !== "option"), options = bots.filter((bot) => bot.asset_class === "option").sort((a, b) => (backtestSummary.get(b.id)?.estimatedPct ?? -Infinity) - (backtestSummary.get(a.id)?.estimatedPct ?? -Infinity));
   return `<div class="bot-groups">${stocks.length ? `<section><div class="group-heading"><div><h3>Stock bots</h3><p>Ranked by weighted historical return</p></div><span>${stocks.length}</span></div><div class="bot-list">${stocks.map((bot) => row(bot, false)).join("")}</div></section>` : ""}${options.length ? `<section><div class="group-heading"><div><h3>Option strategies</h3><p>Ranked by estimated historical replay return</p></div><span>${options.length}</span></div><div class="option-explainer">Estimated replay uses underlying moves, configured delta, premium, width, time decay, and a liquidity haircut. It is a low-confidence pruning aid—not actual historical option P&amp;L.</div><div class="bot-list">${options.map((bot) => row(bot, true)).join("")}</div></section>` : ""}</div>`;
 }
 
@@ -112,6 +137,29 @@ async function toggleBot(botId) {
 
 async function deleteBot(botId, button) {
   button.disabled = true; const { error } = await supabase.from("bg_bots").delete().eq("id", botId); if (error) { button.disabled = false; console.error("Bot removal failed", error); return; } await loadDashboard();
+}
+
+async function createRandomChild(botId, button) {
+  const parent = bots.find((bot) => bot.id === botId); if (!parent) return;
+  const latest = latestBacktest.get(botId), marketDays = Math.max(1, Math.min(60, Number(latest?.daily_regimes?.length) || Math.round(Number(latest?.duration_seconds || 432000) / 86400) || 5));
+  button.disabled = true; button.classList.add("working"); const originalTitle = button.title; button.title = `Creating and testing ${marketDays}-day child…`; let childId = null;
+  try {
+    if (parent.asset_class === "option") {
+      const { data: spread, error: spreadReadError } = await supabase.from("bg_option_spreads").select("*").eq("bot_id", parent.id).single(); if (spreadReadError) throw spreadReadError;
+      const family = spread.strategy_family || "credit_spread", template = OPTION_STRATEGIES.find((strategy) => strategy.id === parent.start_condition?.generated_strategy) || OPTION_STRATEGIES.find((strategy) => strategy.family === family && strategy.bias === (parent.direction === "short" ? "bearish" : "bullish")) || OPTION_STRATEGIES[0];
+      const posture = parent.start_condition?.randomized_fields?.["Risk profile"] || "balanced", selected = randomizedOptionStrategy(template, posture), width = Number(spread.target_width || 0), rawPremium = Number(spread.target_premium || spread.minimum_credit) * randomStep(.85, 1.15, .05), premium = Number(Math.max(.05, family === "credit_spread" ? Math.min(width - .05, rawPremium) : rawPremium).toFixed(2));
+      const riskPerContract = Math.max(.01, (family === "credit_spread" ? width - premium : premium) * 100), contracts = Math.max(1, Math.floor(Number(parent.max_allocation) / riskPerContract)), totalRisk = contracts * riskPerContract, profitClose = Math.max(20, Math.min(70, Number(spread.profit_close_pct) + pick([-5, 0, 5])));
+      const { data: child, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${parent.name} Child`, bot_type: "option_strategy", status: "active", broker: "alpaca", environment: "paper", asset_class: "option", symbol: parent.symbol, direction: selected.bias === "bullish" ? "long" : "short", max_allocation: totalRisk, max_active_trades: 1, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, parent_bot_id: parent.id, generation_kind: "child", randomized_fields: { ...selected.randomizedFields, Parent: parent.name, "Target premium": money(premium) } }, take_profit_pct: profitClose, stop_loss_pct: null, cooldown_seconds: parent.cooldown_seconds, session_policy: parent.session_policy }).select().single(); if (error) throw error; childId = child.id;
+      const { error: childSpreadError } = await supabase.from("bg_option_spreads").insert({ bot_id: child.id, spread_type: selected.spreadType, strategy_family: family, premium_type: family === "credit_spread" ? "credit" : "debit", min_dte: spread.min_dte, max_dte: spread.max_dte, short_delta_target: selected.delta, target_width: width, minimum_credit: premium, target_premium: premium, max_bid_ask_pct: spread.max_bid_ask_pct, contracts, max_risk: totalRisk, profit_close_pct: profitClose, loss_close_multiple: selected.lossCloseMultiple, exit_dte: spread.exit_dte }); if (childSpreadError) throw childSpreadError;
+    } else {
+      const template = RANDOM_STRATEGIES.find((strategy) => strategy.id === parent.start_condition?.generated_strategy) || RANDOM_STRATEGIES[0], fields = parent.start_condition?.randomized_fields || {}, posture = fields["Risk profile"] || "balanced", horizon = fields["Time horizon"] || (Number(parent.cooldown_seconds) >= 86400 ? "swing" : "intraday"), selected = randomizedStockStrategy(template, posture, horizon, parent.symbol), schedule = randomSchedule(selected, Number(parent.max_allocation));
+      const { data: child, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${parent.name} Child`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: "equity", symbol: parent.symbol, direction: parent.direction, max_allocation: parent.max_allocation, max_active_trades: parent.max_active_trades, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, parent_bot_id: parent.id, generation_kind: "child", randomized_fields: { ...selected.randomizedFields, Parent: parent.name }, volatility_model: selected.volatilityModel, sizing_mode: "fixed" }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: parent.cooldown_seconds, session_policy: parent.session_policy }).select().single(); if (error) throw error; childId = child.id;
+      const { error: stepsError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: child.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount }))); if (stepsError) throw stepsError;
+    }
+    await autoBacktest(childId, marketDays); await loadDashboard();
+  } catch (error) {
+    console.error("Child bot creation failed", error); if (childId) await supabase.from("bg_bots").delete().eq("id", childId); button.disabled = false; button.classList.remove("working"); button.title = `Child failed: ${error.message || "try again"}`; setTimeout(() => button.title = originalTitle, 5000);
+  }
 }
 
 function botsBelowThreshold(threshold = 2) {
@@ -512,7 +560,7 @@ function randomizedOptionStrategy(template, posture) {
   const bands = { conservative: [0.10, 0.15], balanced: [0.14, 0.20], aggressive: [0.20, 0.26] };
   const [minDelta, maxDelta] = bands[posture]; next.delta = randomStep(minDelta, maxDelta, .01);
   next.lossCloseMultiple = randomStep(1.5, 2.0, .25); next.posture = posture; next.generationId = crypto.randomUUID();
-  Object.assign(randomized, { "Target delta": next.delta, "Loss-close multiple": `${next.lossCloseMultiple}× premium` });
+  Object.assign(randomized, { "Risk profile": posture, "Target delta": next.delta, "Loss-close multiple": `${next.lossCloseMultiple}× premium` });
   next.randomizedFields = randomized; return next;
 }
 
