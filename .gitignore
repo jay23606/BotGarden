@@ -1,4 +1,5 @@
 .supabase/
+supabase/.temp/
 .env
 .env.*
 !config.example.js
