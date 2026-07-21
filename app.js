@@ -53,6 +53,7 @@ $("#auth-form").addEventListener("submit", async (event) => {
 $("#sign-out").addEventListener("click", () => supabase?.auth.signOut());
 $("#new-bot").addEventListener("click", showBotForm);
 $("#random-bot").addEventListener("click", showRandomBotForm);
+$("#stock-strategy").addEventListener("click", showStockStrategyForm);
 $("#random-option-bot").addEventListener("click", showRandomOptionBotForm);
 $("#random-ten").addEventListener("click", showBulkRandomForm);
 $("#prune-bots").addEventListener("click", pruneUnderperformingBots);
@@ -267,7 +268,7 @@ async function loadActivity() {
 
 function switchView(view) {
   if (view !== "activity") { clearTimeout(activityTimer); activityTimer = null; }
-  const cryptoMode = view === "crypto"; ["#prune-bots", "#random-ten", "#random-bot", "#random-option-bot", "#new-bot"].forEach((selector) => $(selector)?.classList.toggle("hidden", cryptoMode));
+  const cryptoMode = view === "crypto"; ["#prune-bots", "#random-ten", "#random-bot", "#stock-strategy", "#random-option-bot", "#new-bot"].forEach((selector) => $(selector)?.classList.toggle("hidden", cryptoMode));
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === view));
   $("#page-title").textContent = ({ dashboard: "Overview", bots: "Stocks & Options", crypto: "Crypto", activity: "Activity", settings: "Settings" })[view];
   if (view === "dashboard") return loadDashboard();
@@ -484,6 +485,22 @@ function randomSchedule(strategy, risk) {
 async function autoBacktest(botId, marketDays = 5) {
   const end = new Date(); end.setUTCDate(end.getUTCDate() - 1); end.setUTCHours(23, 59, 0, 0); const start = new Date(end); start.setUTCDate(start.getUTCDate() - Math.ceil(Number(marketDays) * 1.6 + 10));
   return invoke("backtest-bot", { botId, start: start.toISOString(), end: end.toISOString(), marketDays: Number(marketDays) });
+}
+
+async function showStockStrategyForm() {
+  modal.showModal();
+  $("#modal-content").innerHTML = `<form id="stock-strategy-form"><div class="modal-head"><div><h3>Create a specialized stock bot</h3><p>Purpose-built behavior instead of an ordinary DCA label.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="form-grid"><label>Strategy<select name="strategy"><option value="stock_grid">ATR-adaptive grid</option><option value="scheduled_accumulation">Scheduled accumulation</option><option value="smart_trailing">Smart trailing reversal</option></select></label><label>Ticker<input name="symbol" value="SPY" pattern="[A-Za-z.]{1,10}" required></label><label>Maximum allocation<input name="risk" type="number" min="50" step="25" value="500" required></label><label>Backtest market days<input name="days" type="number" min="1" max="60" value="5" required></label></div><div class="callout">Grid ranges use the ticker's current ATR. Scheduled accumulation spreads capital over time. Smart trailing waits for both a pullback and a rebound rather than buying a falling price immediately.</div><div class="strategy-roadmap"><div class="strategy-card"><strong>Pairs mean reversion</strong><span>Next: requires synchronized two-symbol fills and hedge-ratio accounting.</span></div><div class="strategy-card"><strong>Portfolio rebalancer</strong><span>Next: requires basket-level orders and portfolio drift state.</span></div><div class="strategy-card"><strong>Webhook signals</strong><span>Next: requires signed inbound endpoints and replay-safe event IDs.</span></div></div><p class="form-message" id="stock-strategy-message"></p></div><div class="modal-foot"><button type="button" class="secondary" data-close-modal>Cancel</button><button class="primary" type="submit">Create and backtest</button></div></form>`;
+  $("#stock-strategy-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); const button=event.submitter,data=new FormData(event.currentTarget),strategy=String(data.get("strategy")),symbol=String(data.get("symbol")).toUpperCase(),risk=Number(data.get("risk"));button.disabled=true;button.textContent="Sizing strategy…";
+    try {
+      const insights=await invoke("ticker-insights",{symbol});const price=Number(insights.market?.price),atrPct=Number(insights.market?.atr_14_pct);if(!price||!atrPct)throw new Error("Current price and ATR are required for this ticker");
+      const config=strategy==="stock_grid"?{range_pct:Math.max(2,Math.min(12,atrPct*pick([2.5,3,3.5]))),levels:pick([6,7,8,9,10]),order_amount:0}:strategy==="scheduled_accumulation"?{interval_days:pick([1,2,3,5]),installments:pick([4,5,6,8,10])}:{pullback_pct:Math.max(1,Math.min(8,atrPct*pick([1.5,2,2.5]))),rebound_pct:Math.max(.4,Math.min(3,atrPct*pick([.6,.8,1]))),lookback_bars:pick([12,18,24,30])};if(strategy==="stock_grid")config.order_amount=Math.max(10,Math.floor(risk/Math.ceil(config.levels/2)));
+      const labels={stock_grid:"Adaptive Grid",scheduled_accumulation:"Scheduled Accumulator",smart_trailing:"Smart Trailing Reversal"};const conditions=strategy==="smart_trailing"?[{type:"trailing_reversal",timeframe:"5Min",parameters:config}]:[{type:"immediate",timeframe:strategy==="scheduled_accumulation"?"1Day":"15Min",parameters:{}}];
+      const {data:bot,error}=await supabase.from("bg_bots").insert({user_id:session.user.id,name:`${symbol} ${labels[strategy]}`,bot_type:strategy==="stock_grid"?"grid":"signal",status:"active",broker:"alpaca",environment:"paper",asset_class:"equity",symbol,direction:"long",max_allocation:risk,max_active_trades:strategy==="stock_grid"?config.levels:1,start_condition:{operator:"AND",conditions,generated_strategy:strategy,strategy_config:config,randomized_fields:{Strategy:labels[strategy],...config}},take_profit_pct:strategy==="scheduled_accumulation"?12:strategy==="smart_trailing"?pick([3,4,5,6]):null,stop_loss_pct:strategy==="smart_trailing"?pick([2,3,4]):null,cooldown_seconds:strategy==="scheduled_accumulation"?config.interval_days*86400:300,session_policy:"regular"}).select().single();if(error)throw error;
+      if(strategy==="stock_grid"){const half=config.range_pct/100;const{error:gridError}=await supabase.from("bg_grid_configs").insert({bot_id:bot.id,user_id:session.user.id,lower_price:price*(1-half),upper_price:price*(1+half),grid_levels:config.levels,order_amount:config.order_amount,spacing_mode:"geometric",recenter_enabled:true,fee_bps:1});if(gridError){await supabase.from("bg_bots").delete().eq("id",bot.id);throw gridError;}}
+      button.textContent="Backtesting…";try{await autoBacktest(bot.id,Number(data.get("days")))}catch(error){console.warn("Specialized stock backtest failed",error)}modal.close();await loadDashboard();switchView("bots");
+    }catch(error){$("#stock-strategy-message").textContent=error.message||"Unable to create strategy";button.disabled=false;button.textContent="Create and backtest";}
+  });
 }
 
 async function showRandomBotForm() {
