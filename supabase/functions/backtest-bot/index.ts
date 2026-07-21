@@ -60,6 +60,18 @@ function classifyMarket(bars: Bar[]) {
   return { regime, returnPct, volatility };
 }
 
+function estimateOptionReplay(bot: any, bars: Bar[], entries: number[], option: any) {
+  const premium = Number(option.target_premium || option.minimum_credit), width = Number(option.target_width), delta = Number(option.short_delta_target), contracts = Number(option.contracts), direction = bot.direction === "short" ? -1 : 1, family = option.strategy_family || "credit_spread"; let estimatedPnl = 0, nextEntry = 0;
+  for (const entryIndex of entries) { if (entryIndex < nextEntry) continue; const entry = bars[entryIndex], slippage = premium * Number(option.max_bid_ask_pct) / 200; let tradePnl = 0, exitIndex = bars.length - 1;
+    for (let i = entryIndex + 1; i < bars.length; i++) { const elapsedDays = Math.max(1 / 24, (new Date(bars[i].t).valueOf() - new Date(entry.t).valueOf()) / 86400000), remainingDte = Number(option.max_dte) - elapsedDays, move = (bars[i].c - entry.c) * direction, theta = premium * Math.min(1, elapsedDays / Number(option.max_dte)); let perContract = delta * move - theta - slippage;
+      if (family === "credit_spread") perContract = Math.max(-(width - premium), Math.min(premium, delta * move + theta - slippage)); else if (family === "debit_spread") perContract = Math.max(-premium, Math.min(width - premium, perContract)); else perContract = Math.max(-premium, perContract); tradePnl = perContract * 100 * contracts;
+      const profitTarget = premium * 100 * contracts * Number(option.profit_close_pct) / 100, lossLimit = Math.min(Number(option.max_risk), premium * 100 * contracts * Number(option.loss_close_multiple)); if (tradePnl >= profitTarget || tradePnl <= -lossLimit || remainingDte <= Number(option.exit_dte) || i === bars.length - 1) { exitIndex = i; break; }
+    }
+    estimatedPnl += tradePnl; nextEntry = exitIndex + 1;
+  }
+  const estimatedReturn = estimatedPnl / Number(bot.max_allocation) * 100, uncertainty = Math.max(2, Math.abs(estimatedReturn) * .4); return { estimated_pnl: estimatedPnl, estimated_return_pct: estimatedReturn, estimate_low_pct: estimatedReturn - uncertainty, estimate_high_pct: estimatedReturn + uncertainty, estimate_confidence: "low" };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: cors });
   let backtestId: string | null = null; let admin: any = null;
@@ -109,7 +121,7 @@ Deno.serve(async (request) => {
     const days = new Map<string, Bar[]>(); testBars.forEach((bar) => { const date = bar.t.slice(0, 10); days.set(date, [...(days.get(date) || []), bar]); });
     const dailyRegimes = [...days.entries()].map(([date, dayBars]) => { const summary = classifyMarket(dayBars); return { date, regime: summary.regime, return_pct: summary.returnPct, volatility: summary.volatility }; });
     const pnl = signalOnly ? null : cash - Number(bot.max_allocation); const wins = trades.filter((trade) => trade.pnl > 0).length; let estimate: any = {};
-    if (signalOnly) { const { data: option } = await admin.from("bg_option_spreads").select("*").eq("bot_id", bot.id).maybeSingle(); if (option && signalEntries.length) { const premium = Number(option.target_premium || option.minimum_credit), width = Number(option.target_width), delta = Number(option.short_delta_target), contracts = Number(option.contracts), direction = bot.direction === "short" ? -1 : 1; let estimatedPnl = 0; for (const entryIndex of signalEntries) { const exitIndex = Math.min(bars.length - 1, entryIndex + 12), move = (bars[exitIndex].c - bars[entryIndex].c) * direction, daysHeld = Math.max(1 / 24, (new Date(bars[exitIndex].t).valueOf() - new Date(bars[entryIndex].t).valueOf()) / 86400000), theta = premium * .5 * daysHeld / Number(option.max_dte), slippage = premium * Number(option.max_bid_ask_pct) / 200; let perContract = delta * move - theta - slippage; if (option.strategy_family === "credit_spread") perContract = Math.max(-(width - premium), Math.min(premium, delta * move + theta - slippage)); else if (option.strategy_family === "debit_spread") perContract = Math.max(-premium, Math.min(width - premium, perContract)); else perContract = Math.max(-premium, perContract); estimatedPnl += perContract * 100 * contracts; } const estimatedReturn = estimatedPnl / Number(bot.max_allocation) * 100; const uncertainty = Math.max(2, Math.abs(estimatedReturn) * .4); estimate = { estimated_pnl: estimatedPnl, estimated_return_pct: estimatedReturn, estimate_low_pct: estimatedReturn - uncertainty, estimate_high_pct: estimatedReturn + uncertainty, estimate_confidence: "low" }; } }
+    if (signalOnly) { const { data: option } = await admin.from("bg_option_spreads").select("*").eq("bot_id", bot.id).maybeSingle(); if (option && signalEntries.length) estimate = estimateOptionReplay(bot, bars, signalEntries, option); }
     const result = { status: signalOnly ? "signal_only" : "completed", ending_capital: signalOnly ? null : cash, net_pnl: pnl, return_pct: signalOnly ? null : pnl / Number(bot.max_allocation) * 100, max_drawdown_pct: signalOnly ? null : maxDrawdown, trade_count: trades.length, win_count: wins, loss_count: trades.length - wins, signal_count: signals, ...estimate, market_regime: market.regime, market_return_pct: market.returnPct, volatility_label: market.volatility, daily_regimes: dailyRegimes, completed_at: new Date().toISOString() };
     await admin.from("bg_backtests").update(result).eq("id", backtestId); return respond({ id: backtestId, ...result, duration_seconds: duration });
   } catch (error) {
