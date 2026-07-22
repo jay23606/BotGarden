@@ -395,7 +395,7 @@ async function createRandomChild(botId, button) {
       const { data: child, error } = await supabase.from("bg_bots").insert({ user_id: session.user.id, name: `${parent.name} Child`, bot_type: "dca", status: "active", broker: "alpaca", environment: "paper", asset_class: "equity", symbol: parent.symbol, direction: parent.direction, max_allocation: parent.max_allocation, max_active_trades: parent.max_active_trades, start_condition: { operator: "AND", conditions: selected.conditions, generated_strategy: selected.id, generation_id: selected.generationId, parent_bot_id: parent.id, generation_kind: "child", randomized_fields: { ...selected.randomizedFields, Parent: parent.name }, volatility_model: selected.volatilityModel, sizing_mode: "fixed" }, take_profit_pct: selected.takeProfit, stop_loss_pct: selected.stopLoss, cooldown_seconds: parent.cooldown_seconds, session_policy: parent.session_policy }).select().single(); if (error) throw error; childId = child.id;
       const { error: stepsError } = await supabase.from("bg_averaging_steps").insert(schedule.map((step) => ({ bot_id: child.id, step_number: step.step, deviation_pct: step.deviation, order_amount: step.amount }))); if (stepsError) throw stepsError;
     }
-    await autoBacktest(childId, marketDays); await loadDashboard();
+    await autoBacktest(childId, marketDays); await refreshWorkspace("bots");
   } catch (error) {
     console.error("Child bot creation failed", error); if (childId) await supabase.from("bg_bots").delete().eq("id", childId); button.disabled = false; button.classList.remove("working"); button.title = `Child failed: ${error.message || "try again"}`; setTimeout(() => button.title = originalTitle, 5000);
   }
