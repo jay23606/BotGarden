@@ -330,7 +330,7 @@ function renderCrypto() {
   }).join("");
   const pruneCount=botsBelowThreshold(2,"crypto").length;
   content.innerHTML = `<div class="crypto-hero"><div><span class="crypto-badge">ALPACA CRYPTO · 24/7</span><h2>Crypto has its own workspace</h2><p>Adaptive grids, volatility-aware accumulation, and pullback/rebound trailing bots run independently of stock-market hours.</p><div class="crypto-note">Paper results are simulations, not profit guarantees. Crypto is volatile and availability depends on your jurisdiction and Alpaca account.</div></div><div><button class="crypto-action" data-new-crypto>+ Crypto bot</button> <button class="secondary" data-new-crypto-batch>Random crypto batch</button></div></div>${promotionLadder("crypto")}<div class="section-head"><div><h3>Crypto bots</h3><span class="subtle">Ranked by evidence-weighted Bot Confidence Score</span></div><button class="prune-button" data-prune-crypto ${pruneCount?"":"disabled"}>Smart prune (${pruneCount})</button></div>${rows ? `<div class="bot-list">${rows}</div>` : `<div class="empty"><h3>No crypto bots yet</h3><div>Create a risk-bounded strategy around a liquid USD crypto pair.</div><button class="primary" data-new-crypto>Create crypto bot</button></div>`}<div class="section-head"><h3>Crypto strategy families</h3></div><div class="strategy-roadmap"><div class="strategy-card live"><strong>Adaptive grid · Live</strong><span>Trades repeated range movement with ATR-sized boundaries.</span></div><div class="strategy-card live"><strong>Smart trailing · Live</strong><span>Waits for a volatility-scaled pullback and confirmed rebound.</span></div><div class="strategy-card live"><strong>Scheduled accumulation · Live</strong><span>Deploys bounded installments with volatility-aware spacing.</span></div><div class="strategy-card"><strong>Portfolio rebalancer · Next</strong><span>Requires coordinated basket fills and portfolio drift state.</span></div><div class="strategy-card"><strong>Pairs mean reversion · Next</strong><span>Requires synchronized two-leg orders and hedge-ratio accounting.</span></div><div class="strategy-card"><strong>Webhook signals · Next</strong><span>Requires signed inbound alerts and replay-safe event IDs.</span></div></div>`;
-  const pruneButton = content.querySelector("[data-prune-crypto]"); if (pruneButton) pruneButton.title = "Uses return, validation, consistency, drawdown, and observed paper evidence";
+  const pruneButton = content.querySelector("[data-prune-crypto]"); if (pruneButton) { pruneButton.textContent = `Smart prune & clean up (${pruneCount})`; pruneButton.title = "Removes weak crypto bots, cancels unmanaged orders, and closes wholly unmanaged positions"; }
 }
 
 async function createCryptoStrategy(strategy,risk,days,asset){
@@ -433,8 +433,8 @@ function updatePruneButton() {
   const button = $("#prune-bots"); if (!button) return;
   const count = botsBelowThreshold().length;
   button.disabled = count === 0;
-  button.textContent = count ? `Smart prune (${count})` : "Smart prune";
-  button.title = count ? `Remove ${count} bot${count === 1 ? "" : "s"} with weak returns, missing tests, negative validation, poor consistency, excessive drawdown, or deteriorated paper results` : "No bots currently meet the evidence-based pruning rules";
+  button.textContent = count ? `Smart prune & clean up (${count})` : "Smart prune & clean up";
+  button.title = count ? `Remove ${count} weak bot${count === 1 ? "" : "s"}, cancel unmanaged orders, and close wholly unmanaged positions` : "No bots currently meet the evidence-based pruning rules";
 }
 
 async function pruneUnderperformingBots(scope = "securities") {
@@ -443,7 +443,11 @@ async function pruneUnderperformingBots(scope = "securities") {
   button.disabled = true; button.textContent = `Smart pruning ${candidates.length}…`;
   const { error } = await supabase.from("bg_bots").delete().in("id", candidates.map((bot) => bot.id));
   if (error) { console.error("Bulk bot removal failed", error); button.textContent = "Removal failed — retry"; button.disabled = false; return; }
+  button.textContent = "Cleaning unmanaged exposure…";
+  const cleanup = await cleanupUnmanagedBrokerExposure((message) => { if (button.isConnected) button.textContent = message; });
   await refreshWorkspace(scope === "crypto" ? "crypto" : currentView);
+  const failures = cleanup.order_failures + cleanup.position_failures;
+  showPwaNotice(`Pruned ${candidates.length} bot${candidates.length===1?"":"s"}; canceled ${cleanup.orders_canceled} order${cleanup.orders_canceled===1?"":"s"} and closed ${cleanup.positions_closed} position${cleanup.positions_closed===1?"":"s"}${failures?`; ${failures} cleanup action${failures===1?"":"s"} could not complete`:""}.`);
 }
 
 function formatDuration(seconds) {
@@ -508,6 +512,18 @@ function showBacktestForm(botId) {
 let activityTimer = null;
 async function closeMarketPosition(symbol,button){button.disabled=true;button.textContent="Closing…";try{await invoke("close-position",{symbol});await loadActivity();}catch(error){button.disabled=false;button.textContent="Close at market";button.title=error.message||"Unable to close position";alert(error.message||"Unable to close position");}}
 async function cancelPendingOrder(orderId,button){button.disabled=true;button.textContent="Canceling…";try{await invoke("cancel-order",{orderId});await loadActivity();}catch(error){button.disabled=false;button.textContent="Cancel order";button.title=error.message||"Unable to cancel order";alert(error.message||"Unable to cancel order");}}
+async function cleanupUnmanagedBrokerExposure(onProgress = () => {}) {
+  const result = { orders_canceled: 0, order_failures: 0, positions_closed: 0, position_failures: 0 };
+  onProgress("Finding unmanaged orders…");
+  const snapshot = await invoke("portfolio-snapshot", {}).catch(() => ({ pending_orders: [] }));
+  const orders = (snapshot.pending_orders || []).filter((order) => order.attribution === "unmanaged");
+  for (let index = 0; index < orders.length; index++) { onProgress(`Canceling order ${index + 1} of ${orders.length}…`); try { await invoke("cancel-order", { orderId: orders[index].id }); result.orders_canceled++; } catch { result.order_failures++; } }
+  onProgress("Rechecking position attribution…");
+  const performance = await invoke("bot-performance", {}).catch(() => ({ position_attribution: [] }));
+  const positions = (performance.position_attribution || []).filter((item) => item.classification === "unmanaged");
+  for (let index = 0; index < positions.length; index++) { onProgress(`Closing position ${index + 1} of ${positions.length}…`); try { await invoke("close-position", { symbol: positions[index].symbol }); result.positions_closed++; } catch { result.position_failures++; } }
+  return result;
+}
 async function closeAllUnmanagedPositions(button){
   button.disabled=true;button.textContent="Checking attribution…";const performance=await invoke("bot-performance",{}).catch(error=>({error:error.message,position_attribution:[]})),targets=(performance.position_attribution||[]).filter(item=>item.classification==="unmanaged"),failures=[];for(let index=0;index<targets.length;index++){button.textContent=`Closing ${index+1} of ${targets.length}…`;try{await invoke("close-position",{symbol:targets[index].symbol})}catch(error){failures.push(`${targets[index].symbol}: ${error.message||"failed"}`)}}await loadDashboard();showPwaNotice(failures.length?`Closed ${targets.length-failures.length} unmanaged positions; ${failures.length} could not close (often because the market is closed).`:`Closed ${targets.length} unmanaged position${targets.length===1?"":"s"}.`);
 }
