@@ -112,10 +112,11 @@ Deno.serve(async (req) => {
     }));
     let reconciledOrders = 0;
     const managedBrokerOrderIds = new Set<string>();
+    const brokerOrderBots = new Map<string, string>();
     const brokerOrderIds = rawOrders.map((order: any) => order.id).filter(Boolean);
     if (brokerOrderIds.length) {
-      const { data: localOrders } = await admin.from("bg_orders").select("id,trade_id,broker_order_id,status").eq("user_id", user.id).in("broker_order_id", brokerOrderIds);
-      for (const localOrder of localOrders || []) if (localOrder.broker_order_id) managedBrokerOrderIds.add(localOrder.broker_order_id);
+      const { data: localOrders } = await admin.from("bg_orders").select("id,bot_id,trade_id,broker_order_id,status").eq("user_id", user.id).in("broker_order_id", brokerOrderIds);
+      for (const localOrder of localOrders || []) if (localOrder.broker_order_id) { managedBrokerOrderIds.add(localOrder.broker_order_id); if (localOrder.bot_id) brokerOrderBots.set(localOrder.broker_order_id, localOrder.bot_id); }
       const brokerOrders = new Map(rawOrders.map((order: any) => [order.id, order]));
       for (const localOrder of localOrders || []) {
         const brokerOrder: any = brokerOrders.get(localOrder.broker_order_id);
@@ -133,6 +134,7 @@ Deno.serve(async (req) => {
     }
     for (const order of pendingOrders) {
       (order as any).attribution = managedBrokerOrderIds.has(order.id) ? "managed" : "unmanaged";
+      (order as any).bot_id = brokerOrderBots.get(order.id) || null;
     }
     return json({ connected: true, account, positions, history, fills, pending_orders: pendingOrders, reconciled_orders: reconciledOrders, as_of: new Date().toISOString() });
   } catch (error) {

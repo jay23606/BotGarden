@@ -37,7 +37,7 @@ create table if not exists public.bg_bots (
   connection_id uuid references public.bg_broker_connections(id) on delete set null,
   name text not null check (char_length(name) between 1 and 100),
   bot_type text not null default 'dca' check (bot_type in ('dca','grid','signal','credit_spread','option_strategy')),
-  status text not null default 'active' check (status in ('draft','active','paused','stopped','error')),
+  status text not null default 'active' check (status in ('draft','active','paused','stopped','archived','error')),
   broker text not null default 'alpaca',
   environment text not null default 'paper' check (environment in ('paper','live')),
   asset_class text not null check (asset_class in ('equity','option','crypto')),
@@ -115,6 +115,7 @@ create table if not exists public.bg_trades (
 create table if not exists public.bg_orders (
   id uuid primary key default gen_random_uuid(),
   trade_id uuid references public.bg_trades(id) on delete cascade,
+  bot_id uuid references public.bg_bots(id) on delete set null,
   user_id uuid not null references auth.users(id) on delete cascade,
   broker_order_id text,
   client_order_id text not null unique,
@@ -129,6 +130,24 @@ create table if not exists public.bg_orders (
   raw_response jsonb,
   submitted_at timestamptz,
   created_at timestamptz not null default now()
+);
+
+create index if not exists bg_orders_bot_created_idx on public.bg_orders(bot_id, created_at desc);
+
+create table if not exists public.bg_fill_ledger (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  activity_id text not null,
+  broker_order_id text not null,
+  bot_id uuid references public.bg_bots(id) on delete set null,
+  symbol text not null,
+  side text not null check (side in ('buy','sell')),
+  quantity numeric(24,8) not null,
+  price numeric(24,8) not null,
+  transaction_time timestamptz not null,
+  raw_activity jsonb,
+  created_at timestamptz not null default now(),
+  unique(user_id, activity_id)
 );
 
 create table if not exists public.bg_fills (

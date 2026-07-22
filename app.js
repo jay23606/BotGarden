@@ -174,7 +174,7 @@ async function loadDashboard() {
   backtestSummary = new Map();
   latestBacktest = new Map();
   (backtests || []).forEach((test) => { const current = backtestSummary.get(test.bot_id) || { seconds: 0, runs: 0, signalOnlyRuns: 0, signals: 0, trades: 0, wins: 0, losses: 0, positiveRuns: 0, evaluatedRuns: 0, maxDrawdown: 0, validationReturns: [], testedDates: new Set(), pnl: 0, capital: 0, profitPct: null, estimatedPnl: 0, estimatedCapital: 0, estimatedPct: null }; current.seconds += Number(test.duration_seconds); current.runs++; (test.daily_regimes || []).forEach((day) => current.testedDates.add(day.date)); current.trades += Number(test.trade_count || 0); current.wins += Number(test.win_count || 0); current.losses += Number(test.loss_count || 0); current.maxDrawdown = Math.max(current.maxDrawdown, Number(test.max_drawdown_pct || 0)); const validation = test.status === "signal_only" ? test.walk_forward?.validation_estimated_return_pct : test.walk_forward?.validation_return_pct; if (validation != null) current.validationReturns.push(Number(validation)); const evaluated = test.status === "signal_only" ? test.estimated_return_pct : test.return_pct; if (evaluated != null) { current.evaluatedRuns++; if (Number(evaluated) > 0) current.positiveRuns++; } if (test.status === "signal_only") { current.signalOnlyRuns++; current.signals += Number(test.signal_count || 0); if (test.estimated_pnl != null) { current.estimatedPnl += Number(test.estimated_pnl); current.estimatedCapital += Number(test.initial_capital); current.estimatedPct = current.estimatedPnl / current.estimatedCapital * 100; } } if (test.net_pnl != null) { current.pnl += Number(test.net_pnl); current.capital += Number(test.initial_capital); current.profitPct = current.capital ? current.pnl / current.capital * 100 : null; } backtestSummary.set(test.bot_id, current); const latest = latestBacktest.get(test.bot_id); if (!latest || new Date(test.created_at) > new Date(latest.created_at)) latestBacktest.set(test.bot_id, test); });
-  bots = botData || []; bots.sort(compareBotRank);
+  bots = (botData || []).filter((bot) => !["stopped", "archived"].includes(bot.status)); bots.sort(compareBotRank);
   updatePruneButton();
   const active = bots.filter((b) => b.status === "active").length;
   const positions = portfolio?.positions || [], account = portfolio?.account;
@@ -387,7 +387,7 @@ async function showCryptoBatchFormV3(){
 }
 
 async function deleteBot(botId, button) {
-  button.disabled = true; const { error } = await supabase.from("bg_bots").delete().eq("id", botId); if (error) { button.disabled = false; console.error("Bot removal failed", error); return; } await refreshWorkspace();
+  button.disabled = true; const { error } = await supabase.from("bg_bots").update({ status: "stopped", updated_at: new Date().toISOString() }).eq("id", botId); if (error) { button.disabled = false; console.error("Bot retirement failed", error); return; } await cleanupUnmanagedBrokerExposure(() => {}, [botId]); await refreshWorkspace();
 }
 
 async function createRandomChild(botId, button) {
@@ -442,10 +442,10 @@ async function pruneUnderperformingBots(scope = "securities") {
   const button = scope === "crypto" ? document.querySelector("[data-prune-crypto]") : $("#prune-bots");
   const candidates = botsBelowThreshold(2,scope); if (!candidates.length) return;
   button.disabled = true; button.textContent = `Smart pruning ${candidates.length}…`;
-  const { error } = await supabase.from("bg_bots").delete().in("id", candidates.map((bot) => bot.id));
+  const retiringIds = candidates.map((bot) => bot.id), { error } = await supabase.from("bg_bots").update({ status: "stopped", updated_at: new Date().toISOString() }).in("id", retiringIds);
   if (error) { console.error("Bulk bot removal failed", error); button.textContent = "Removal failed — retry"; button.disabled = false; return; }
   button.textContent = "Cleaning unmanaged exposure…";
-  const cleanup = await cleanupUnmanagedBrokerExposure((message) => { if (button.isConnected) button.textContent = message; });
+  const cleanup = await cleanupUnmanagedBrokerExposure((message) => { if (button.isConnected) button.textContent = message; }, retiringIds);
   await refreshWorkspace(scope === "crypto" ? "crypto" : currentView);
   const failures = cleanup.order_failures + cleanup.position_failures;
   showPwaNotice(`Pruned ${candidates.length} bot${candidates.length===1?"":"s"}; canceled ${cleanup.orders_canceled} order${cleanup.orders_canceled===1?"":"s"} and closed ${cleanup.positions_closed} position${cleanup.positions_closed===1?"":"s"}${failures?`; ${failures} cleanup action${failures===1?"":"s"} could not complete`:""}.`);
@@ -532,15 +532,16 @@ function showBacktestForm(botId) {
 let activityTimer = null;
 async function closeMarketPosition(symbol,button){button.disabled=true;button.textContent="Closing…";try{await invoke("close-position",{symbol});await loadActivity();}catch(error){button.disabled=false;button.textContent="Close at market";button.title=error.message||"Unable to close position";alert(error.message||"Unable to close position");}}
 async function cancelPendingOrder(orderId,button){button.disabled=true;button.textContent="Canceling…";try{await invoke("cancel-order",{orderId});await loadActivity();}catch(error){button.disabled=false;button.textContent="Cancel order";button.title=error.message||"Unable to cancel order";alert(error.message||"Unable to cancel order");}}
-async function cleanupUnmanagedBrokerExposure(onProgress = () => {}) {
+async function cleanupUnmanagedBrokerExposure(onProgress = () => {}, retiringBotIds = []) {
+  const retiring = new Set(retiringBotIds);
   const result = { orders_canceled: 0, order_failures: 0, positions_closed: 0, position_failures: 0 };
   onProgress("Finding unmanaged orders…");
   const snapshot = await invoke("portfolio-snapshot", {}).catch(() => ({ pending_orders: [] }));
-  const orders = (snapshot.pending_orders || []).filter((order) => order.attribution === "unmanaged");
+  const orders = (snapshot.pending_orders || []).filter((order) => order.attribution === "unmanaged" || retiring.has(order.bot_id));
   for (let index = 0; index < orders.length; index++) { onProgress(`Canceling order ${index + 1} of ${orders.length}…`); try { await invoke("cancel-order", { orderId: orders[index].id }); result.orders_canceled++; } catch { result.order_failures++; } }
   onProgress("Rechecking position attribution…");
   const performance = await invoke("bot-performance", {}).catch(() => ({ position_attribution: [] }));
-  const positions = (performance.position_attribution || []).filter((item) => item.classification === "unmanaged");
+  const positions = (performance.position_attribution || []).filter((item) => { const owners = Object.keys(item.bot_quantities || {}).filter((botId) => Math.abs(Number(item.bot_quantities[botId] || 0)) > 1e-8); return item.classification === "unmanaged" || (owners.length > 0 && owners.every((botId) => retiring.has(botId))); });
   for (let index = 0; index < positions.length; index++) { onProgress(`Closing position ${index + 1} of ${positions.length}…`); try { await invoke("close-position", { symbol: positions[index].symbol }); result.positions_closed++; } catch { result.position_failures++; } }
   return result;
 }

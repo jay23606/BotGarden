@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
 
     const [{ data: bots }, { data: orders }, { data: trades }, { data: runs }, { data: events }, positions] = await Promise.all([
       admin.from("bg_bots").select("id,name,symbol,asset_class,max_allocation").eq("user_id", user.id),
-      admin.from("bg_orders").select("broker_order_id,trade_id").eq("user_id", user.id).not("broker_order_id", "is", null).limit(10000),
+      admin.from("bg_orders").select("broker_order_id,bot_id,trade_id").eq("user_id", user.id).not("broker_order_id", "is", null).limit(10000),
       admin.from("bg_trades").select("id,run_id").eq("user_id", user.id).limit(10000),
       admin.from("bg_bot_runs").select("id,bot_id").eq("user_id", user.id).limit(10000),
       admin.from("bg_bot_events").select("bot_id,details").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10000),
@@ -40,10 +40,10 @@ Deno.serve(async (req) => {
     const runBot = new Map((runs || []).map((run: any) => [run.id, run.bot_id]));
     const tradeBot = new Map((trades || []).map((trade: any) => [trade.id, runBot.get(trade.run_id)]));
     const orderBot = new Map<string, string>();
-    for (const order of orders || []) { const botId = tradeBot.get(order.trade_id); if (botId && botIds.has(botId)) orderBot.set(order.broker_order_id, botId); }
+    for (const order of orders || []) { const botId = order.bot_id || tradeBot.get(order.trade_id); if (botId && botIds.has(botId)) orderBot.set(order.broker_order_id, botId); }
     for (const event of events || []) { const orderId = event.details?.broker_order_id; if (orderId && botIds.has(event.bot_id) && !orderBot.has(orderId)) orderBot.set(orderId, event.bot_id); }
 
-    const fills: any[] = [];
+    let fills: any[] = [];
     let pageToken = "", truncated = false;
     for (let page = 0; page < 10; page++) {
       const url = new URL("https://paper-api.alpaca.markets/v2/account/activities/FILL");
@@ -57,13 +57,20 @@ Deno.serve(async (req) => {
       if (page === 9) truncated = true;
     }
     fills.sort((a, b) => new Date(a.transaction_time).valueOf() - new Date(b.transaction_time).valueOf());
+    if (fills.length) {
+      await admin.from("bg_fill_ledger").upsert(fills.map((fill: any) => ({ user_id: user.id, activity_id: fill.id, broker_order_id: fill.order_id, bot_id: orderBot.get(fill.order_id) || null, symbol: symbolKey(fill.symbol), side: fill.side, quantity: Number(fill.qty), price: Number(fill.price), transaction_time: fill.transaction_time, raw_activity: fill })), { onConflict: "user_id,activity_id" });
+    }
+    const { data: ledger } = await admin.from("bg_fill_ledger").select("activity_id,broker_order_id,bot_id,symbol,side,quantity,price,transaction_time").eq("user_id", user.id).order("transaction_time", { ascending: true }).limit(50000);
+    if (ledger?.length) {
+      fills = ledger.map((fill: any) => ({ id: fill.activity_id, order_id: fill.broker_order_id, symbol: fill.symbol, side: fill.side, qty: fill.quantity, price: fill.price, transaction_time: fill.transaction_time, ledger_bot_id: fill.bot_id }));
+    }
     const marks = new Map<string, number>();
     for (const position of positions || []) marks.set(symbolKey(position.symbol), Number(position.current_price));
     const state = new Map<string, any>(), globalLots = new Map<string, any[]>();
     for (const bot of bots || []) state.set(bot.id, { bot_id: bot.id, fill_count: 0, realized_pnl: 0, unrealized_pnl: 0, total_pnl: 0, open_cost: 0, closed_quantity: 0, mark_to_market_complete: true, first_fill_at: null, last_fill_at: null });
     let unattributed = 0;
     for (const fill of fills) {
-      const botId = orderBot.get(fill.order_id), symbol = symbolKey(fill.symbol), price = Number(fill.price), absoluteQty = Number(fill.qty), signedQty = fill.side === "buy" ? absoluteQty : -absoluteQty;
+      const botId = fill.ledger_bot_id || orderBot.get(fill.order_id), symbol = symbolKey(fill.symbol), price = Number(fill.price), absoluteQty = Number(fill.qty), signedQty = fill.side === "buy" ? absoluteQty : -absoluteQty;
       if (!Number.isFinite(price) || !Number.isFinite(signedQty) || !signedQty) continue;
       const lots = globalLots.get(symbol) || []; let remaining = signedQty; const touched = new Set<string>();
       while (remaining && lots.length && Math.sign(lots[0].qty) !== Math.sign(remaining)) {
@@ -99,7 +106,8 @@ Deno.serve(async (req) => {
       const attributedQty = lots.reduce((sum: number, lot: any) => sum + Number(lot.qty || 0), 0);
       const unmanagedQty = brokerQty - attributedQty, tolerance = 1e-8;
       const classification = Math.abs(attributedQty) < tolerance ? "unmanaged" : Math.abs(unmanagedQty) < tolerance ? "managed" : "mixed";
-      return { symbol: position.symbol, asset_class: position.asset_class === "crypto" ? "crypto" : position.asset_class === "us_option" ? "option" : "equity", broker_quantity: brokerQty, attributed_quantity: attributedQty, unmanaged_quantity: unmanagedQty, classification, confidence: truncated ? "estimated" : "verified" };
+      const botQuantities = lots.reduce((result: Record<string, number>, lot: any) => { result[lot.bot_id] = (result[lot.bot_id] || 0) + Number(lot.qty || 0); return result; }, {});
+      return { symbol: position.symbol, asset_class: position.asset_class === "crypto" ? "crypto" : position.asset_class === "us_option" ? "option" : "equity", broker_quantity: brokerQty, attributed_quantity: attributedQty, unmanaged_quantity: unmanagedQty, bot_quantities: botQuantities, classification, confidence: truncated && !ledger?.length ? "estimated" : "verified" };
     });
     return json({ connected: true, bots: [...state.values()], position_attribution: positionAttribution, unattributed_fill_count: unattributed, activity_count: fills.length, truncated, as_of: new Date().toISOString() });
   } catch (error) {
