@@ -58,7 +58,9 @@ Deno.serve(async (req) => {
     }
     fills.sort((a, b) => new Date(a.transaction_time).valueOf() - new Date(b.transaction_time).valueOf());
     if (fills.length) {
-      await admin.from("bg_fill_ledger").upsert(fills.map((fill: any) => ({ user_id: user.id, activity_id: fill.id, broker_order_id: fill.order_id, bot_id: orderBot.get(fill.order_id) || null, symbol: symbolKey(fill.symbol), side: fill.side, quantity: Number(fill.qty), price: Number(fill.price), transaction_time: fill.transaction_time, raw_activity: fill })), { onConflict: "user_id,activity_id" });
+      const rows = fills.map((fill: any) => ({ user_id: user.id, activity_id: fill.id, broker_order_id: fill.order_id, bot_id: orderBot.get(fill.order_id) || null, symbol: symbolKey(fill.symbol), side: fill.side, quantity: Number(fill.qty), price: Number(fill.price), transaction_time: fill.transaction_time, raw_activity: fill })), attributed = rows.filter((row: any) => row.bot_id), unattributedRows = rows.filter((row: any) => !row.bot_id);
+      if (attributed.length) await admin.from("bg_fill_ledger").upsert(attributed, { onConflict: "user_id,activity_id" });
+      if (unattributedRows.length) await admin.from("bg_fill_ledger").upsert(unattributedRows, { onConflict: "user_id,activity_id", ignoreDuplicates: true });
     }
     const { data: ledger } = await admin.from("bg_fill_ledger").select("activity_id,broker_order_id,bot_id,symbol,side,quantity,price,transaction_time").eq("user_id", user.id).order("transaction_time", { ascending: true }).limit(50000);
     if (ledger?.length) {
@@ -73,13 +75,15 @@ Deno.serve(async (req) => {
       const botId = fill.ledger_bot_id || orderBot.get(fill.order_id), symbol = symbolKey(fill.symbol), price = Number(fill.price), absoluteQty = Number(fill.qty), signedQty = fill.side === "buy" ? absoluteQty : -absoluteQty;
       if (!Number.isFinite(price) || !Number.isFinite(signedQty) || !signedQty) continue;
       const lots = globalLots.get(symbol) || []; let remaining = signedQty; const touched = new Set<string>();
-      while (remaining && lots.length && Math.sign(lots[0].qty) !== Math.sign(remaining)) {
-        const lot = lots[0], matched = Math.min(Math.abs(remaining), Math.abs(lot.qty));
+      while (Math.abs(remaining) >= 1e-10 && lots.length) {
+        let matchIndex = lots.findIndex((lot: any) => Math.sign(lot.qty) !== Math.sign(remaining) && (!botId || lot.bot_id === botId));
+        if (matchIndex < 0 && !botId) matchIndex = lots.findIndex((lot: any) => Math.sign(lot.qty) !== Math.sign(remaining));
+        if (matchIndex < 0) break;
+        const lot = lots[matchIndex], matched = Math.min(Math.abs(remaining), Math.abs(lot.qty));
         const performance = state.get(lot.bot_id);
-        performance.realized_pnl += lot.qty > 0 ? (price - lot.price) * matched : (lot.price - price) * matched;
-        performance.closed_quantity += matched; performance.first_fill_at ||= fill.transaction_time; performance.last_fill_at = fill.transaction_time; touched.add(lot.bot_id);
+        if (performance) { performance.realized_pnl += lot.qty > 0 ? (price - lot.price) * matched : (lot.price - price) * matched; performance.closed_quantity += matched; performance.first_fill_at ||= fill.transaction_time; performance.last_fill_at = fill.transaction_time; touched.add(lot.bot_id); }
         lot.qty += Math.sign(remaining) * matched; remaining -= Math.sign(remaining) * matched;
-        if (Math.abs(lot.qty) < 1e-10) lots.shift();
+        if (Math.abs(lot.qty) < 1e-10) lots.splice(matchIndex, 1);
       }
       if (Math.abs(remaining) >= 1e-10) {
         if (!botId || !state.has(botId)) unattributed++;
@@ -91,7 +95,7 @@ Deno.serve(async (req) => {
     for (const [symbol, lots] of globalLots) {
       const mark = marks.get(symbol);
       for (const lot of lots) {
-        const performance = state.get(lot.bot_id); performance.open_cost += Math.abs(lot.qty * lot.price);
+        const performance = state.get(lot.bot_id); if (!performance) continue; performance.open_cost += Math.abs(lot.qty * lot.price);
         if (!mark) performance.mark_to_market_complete = false;
         else performance.unrealized_pnl += lot.qty > 0 ? (mark - lot.price) * lot.qty : (lot.price - mark) * Math.abs(lot.qty);
       }
