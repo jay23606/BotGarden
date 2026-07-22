@@ -74,10 +74,10 @@ Deno.serve(async (req) => {
     for (const fill of fills) {
       const botId = fill.ledger_bot_id || orderBot.get(fill.order_id), symbol = symbolKey(fill.symbol), price = Number(fill.price), absoluteQty = Number(fill.qty), signedQty = fill.side === "buy" ? absoluteQty : -absoluteQty;
       if (!Number.isFinite(price) || !Number.isFinite(signedQty) || !signedQty) continue;
+      if (!botId || !state.has(botId)) { unattributed++; continue; }
       const lots = globalLots.get(symbol) || []; let remaining = signedQty; const touched = new Set<string>();
       while (Math.abs(remaining) >= 1e-10 && lots.length) {
-        let matchIndex = lots.findIndex((lot: any) => Math.sign(lot.qty) !== Math.sign(remaining) && (!botId || lot.bot_id === botId));
-        if (matchIndex < 0 && !botId) matchIndex = lots.findIndex((lot: any) => Math.sign(lot.qty) !== Math.sign(remaining));
+        const matchIndex = lots.findIndex((lot: any) => Math.sign(lot.qty) !== Math.sign(remaining) && lot.bot_id === botId);
         if (matchIndex < 0) break;
         const lot = lots[matchIndex], matched = Math.min(Math.abs(remaining), Math.abs(lot.qty));
         const performance = state.get(lot.bot_id);
@@ -86,8 +86,7 @@ Deno.serve(async (req) => {
         if (Math.abs(lot.qty) < 1e-10) lots.splice(matchIndex, 1);
       }
       if (Math.abs(remaining) >= 1e-10) {
-        if (!botId || !state.has(botId)) unattributed++;
-        else { lots.push({ bot_id: botId, qty: remaining, price }); const performance = state.get(botId); performance.first_fill_at ||= fill.transaction_time; performance.last_fill_at = fill.transaction_time; touched.add(botId); }
+        lots.push({ bot_id: botId, qty: remaining, price }); const performance = state.get(botId); performance.first_fill_at ||= fill.transaction_time; performance.last_fill_at = fill.transaction_time; touched.add(botId);
       }
       for (const touchedBotId of touched) state.get(touchedBotId).fill_count++;
       globalLots.set(symbol, lots);

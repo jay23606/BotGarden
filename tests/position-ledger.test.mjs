@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateBotPosition, staleOrderDeadline } from "../supabase/functions/_shared/position-ledger.js";
+import { boundedEntryNotional, calculateBotPosition, cooldownRemainingMs, optionMatchesUnderlying, optionUnderlying, staleOrderDeadline } from "../supabase/functions/_shared/position-ledger.js";
 
 test("calculates a weighted long cost basis after a partial exit", () => {
   const result = calculateBotPosition([
@@ -51,4 +51,22 @@ test("exit orders become stale sooner than entry orders", () => {
   assert.equal(entry.deadline - Date.parse(submitted), 15 * 60000);
   assert.equal(exit.deadline - Date.parse(submitted), 5 * 60000);
   assert.equal(exit.isExit, true);
+});
+
+test("option ownership uses the complete OCC underlying instead of a ticker prefix", () => {
+  assert.equal(optionUnderlying("LTC260821C00100000"), "LTC");
+  assert.equal(optionMatchesUnderlying("SPY260821P00500000", "SPY"), true);
+  assert.equal(optionMatchesUnderlying("SPYG260821P00090000", "SPY"), false);
+});
+
+test("cooldown starts at the actual exit fill", () => {
+  const exit = "2026-07-22T12:00:00.000Z";
+  assert.equal(cooldownRemainingMs(exit, 1800, Date.parse("2026-07-22T12:10:00.000Z")), 20 * 60000);
+  assert.equal(cooldownRemainingMs(exit, 1800, Date.parse("2026-07-22T12:31:00.000Z")), 0);
+});
+
+test("entry sizing never exceeds the bot allocation", () => {
+  assert.equal(boundedEntryNotional(100, 500, 475), 25);
+  assert.equal(boundedEntryNotional(100, 500, 510), 0);
+  assert.equal(boundedEntryNotional(100, 500, 200), 100);
 });

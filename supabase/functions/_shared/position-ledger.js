@@ -1,5 +1,21 @@
 export const normalizeSymbol = (value) => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
+export function optionUnderlying(symbol) {
+  const match = normalizeSymbol(symbol).match(/^([A-Z]{1,6})\d{6}[CP]\d{8}$/);
+  return match?.[1] || null;
+}
+
+export const optionMatchesUnderlying = (optionSymbol, underlying) => optionUnderlying(optionSymbol) === normalizeSymbol(underlying);
+
+export function cooldownRemainingMs(lastExitFillAt, cooldownSeconds, now = Date.now()) {
+  if (!lastExitFillAt || Number(cooldownSeconds) <= 0) return 0;
+  return Math.max(0, Number(cooldownSeconds) * 1000 - (Number(now) - new Date(lastExitFillAt).valueOf()));
+}
+
+export function boundedEntryNotional(requested, maxAllocation, currentExposure) {
+  return Math.max(0, Math.min(Number(requested) || 0, (Number(maxAllocation) || 0) - Math.max(0, Number(currentExposure) || 0)));
+}
+
 export function calculateBotPosition(fills, symbol, mark) {
   const lots = [];
   for (const fill of fills.filter((item) => normalizeSymbol(item.symbol) === normalizeSymbol(symbol))) {
