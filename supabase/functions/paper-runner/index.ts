@@ -131,8 +131,9 @@ Deno.serve(async (request) => {
   const requestBody = await request.json().catch(() => ({})); const validateOptions = requestBody.validateOptions === true, exitOnly = requestBody.exitOnly === true;
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
   const summary = { mode: exitOnly ? "risk-monitor" : "entry-runner", checked: 0, matched: 0, submitted: 0, exits: 0, optionOrders: 0, optionExits: 0, optionValidated: 0, skipped: 0, errors: 0 };
-  const { data: authUsers } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 }); const superuser = authUsers?.users?.find((user: any) => user.email?.toLowerCase() === "joeydavis0068@gmail.com");
-  let regularQuery = admin.from("bg_bots").select("*").eq("environment", "paper"); regularQuery = exitOnly ? regularQuery.in("status", ["active", "paused"]) : regularQuery.eq("status", "active"); if (superuser) regularQuery = regularQuery.neq("user_id", superuser.id); let superQuery = superuser ? admin.from("bg_bots").select("*").eq("environment", "paper").eq("user_id", superuser.id) : null; if (superQuery) superQuery = exitOnly ? superQuery.in("status", ["active", "paused"]) : superQuery.eq("status", "active"); const [{ data: regularBots, error }, superResult] = await Promise.all([regularQuery.limit(100), superQuery || Promise.resolve({ data: [] })]); if (error) return json({ error: error.message }, 500); const bots = [...(superResult.data || []), ...(regularBots || [])];
+  const heartbeatStarted = new Date().toISOString(); await admin.from("bg_worker_heartbeats").upsert({ worker_mode: summary.mode, started_at: heartbeatStarted, completed_at: null, status: "running", summary: {} });
+  const [{ data: authUsers }, { data: controls }] = await Promise.all([admin.auth.admin.listUsers({ page: 1, perPage: 1000 }), admin.from("bg_user_controls").select("user_id,entries_paused").eq("entries_paused", true)]); const superuser = authUsers?.users?.find((user: any) => user.email?.toLowerCase() === "joeydavis0068@gmail.com"), pausedUsers = new Set((controls || []).map((control: any) => control.user_id));
+  let regularQuery = admin.from("bg_bots").select("*").eq("environment", "paper"); regularQuery = exitOnly ? regularQuery.in("status", ["active", "paused"]) : regularQuery.eq("status", "active"); if (superuser) regularQuery = regularQuery.neq("user_id", superuser.id); let superQuery = superuser ? admin.from("bg_bots").select("*").eq("environment", "paper").eq("user_id", superuser.id) : null; if (superQuery) superQuery = exitOnly ? superQuery.in("status", ["active", "paused"]) : superQuery.eq("status", "active"); const [{ data: regularBots, error }, superResult] = await Promise.all([regularQuery.limit(100), superQuery || Promise.resolve({ data: [] })]); if (error) { await admin.from("bg_worker_heartbeats").upsert({ worker_mode: summary.mode, started_at: heartbeatStarted, completed_at: new Date().toISOString(), status: "error", summary: { error: error.message } }); return json({ error: error.message }, 500); } const bots = [...(superResult.data || []), ...(regularBots || [])];
   const key = await cryptoKey();
   const brokerCache = new Map<string, any>();
   const benchmarkCache = new Map<string, Bar[]>();
@@ -142,6 +143,7 @@ Deno.serve(async (request) => {
     try {
       await setStatus("checking", "Evaluation in progress");
       if (validateOptions && bot.asset_class !== "option") continue;
+      if (!exitOnly && !validateOptions && pausedUsers.has(bot.user_id)) { await setStatus("emergency_paused", "Global emergency stop is active; new entries are paused while risk exits continue"); summary.skipped++; continue; }
       let broker = brokerCache.get(bot.user_id);
       if (broker === undefined) {
         const { data: connection } = await admin.from("bg_broker_connections").select("id").eq("user_id", bot.user_id).eq("environment", "paper").eq("status", "connected").maybeSingle();
@@ -196,5 +198,5 @@ Deno.serve(async (request) => {
       await admin.from("bg_bot_events").insert({ bot_id: bot.id, run_id: run.id, user_id: bot.user_id, event_type: "paper_order_submitted", message: `Submitted ${bot.symbol} ${option ? "option" : "stock"} paper order`, details: { broker_order_id: order.id, client_order_id: clientOrderId, notional: option ? null : notional, option_symbols: option?.symbols, max_risk: option?.risk } }); await setStatus("order_submitted", `Submitted ${option ? "option" : "stock"} paper order`, { broker_order_id: order.id, client_order_id: clientOrderId }); summary.submitted++; if (option) summary.optionOrders++;
     } catch (e) { summary.errors++; const message = e instanceof Error ? e.message : "Runner error"; await setStatus("error", message); await admin.from("bg_bot_events").insert({ bot_id: bot.id, user_id: bot.user_id, event_type: "runner_error", severity: "error", message }); }
   }
-  return json(summary);
+  await admin.from("bg_worker_heartbeats").upsert({ worker_mode: summary.mode, started_at: heartbeatStarted, completed_at: new Date().toISOString(), status: summary.errors ? "completed_with_errors" : "healthy", summary }); return json(summary);
 });
