@@ -3,6 +3,27 @@
   margin: 0 0 24px;
 }
 
+.overview-toolbar {
+  align-items: center;
+  background: linear-gradient(120deg, #eff8f1, #f8fbf8);
+  border: 1px solid var(--border, #dfe6e1);
+  border-radius: 16px;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  padding: 18px 20px;
+}
+
+.overview-toolbar h2,
+.overview-toolbar p { margin: 2px 0; }
+.overview-toolbar p { color: var(--muted, #66756e); }
+.batch-test-counts { display: flex; gap: 24px; margin-top: 18px; }
+.batch-test-counts span { color: var(--muted, #66756e); }
+.batch-test-counts b { color: var(--ink, #17231e); }
+.batch-complete { align-items: center; display: flex; gap: 14px; padding: 12px 0; }
+.batch-complete strong { color: var(--green, #176b4b); font-size: 2.4rem; }
+
 .today-center .section-head,
 .overlap-map .section-head {
   align-items: flex-end;
@@ -75,6 +96,8 @@
 .overlap-grid article small { line-height: 1.45; }
 
 @media (max-width: 620px) {
+  .overview-toolbar { align-items: stretch; flex-direction: column; }
+  .overview-toolbar button { width: 100%; }
   .action-item { align-items: stretch; flex-direction: column; gap: 12px; }
   .action-item button { width: 100%; }
   .today-center .section-head,

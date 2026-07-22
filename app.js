@@ -16,6 +16,7 @@ let currentView = "dashboard";
 let activityFilter = "equity";
 let securitiesFilter = "equity";
 let deferredInstallPrompt = null;
+let batchBacktestRunning = false;
 
 function showPwaNotice(message, action = "") {
   let notice = document.querySelector(".pwa-notice"); if (!notice) { notice = document.createElement("div"); notice.className = "pwa-notice"; document.body.append(notice); }
@@ -93,6 +94,7 @@ document.addEventListener("click", (event) => {
   const operationsControl = event.target.closest("[data-operations-control]"); if (operationsControl) setOperationsControl(operationsControl.dataset.operationsControl, operationsControl);
   const details = event.target.closest("[data-bot-details]"); if (details) showBotDetails(details.dataset.botDetails);
   const backtest = event.target.closest("[data-backtest]"); if (backtest) showBacktestForm(backtest.dataset.backtest);
+  const backtestAll = event.target.closest("[data-backtest-all]"); if (backtestAll) backtestAllBots30Days(backtestAll);
   const child = event.target.closest("[data-child-bot]"); if (child) createRandomChild(child.dataset.childBot, child);
   const toggle = event.target.closest("[data-toggle-bot]"); if (toggle) toggleBot(toggle.dataset.toggleBot);
   const remove = event.target.closest("[data-delete-bot]"); if (remove) deleteBot(remove.dataset.deleteBot, remove);
@@ -185,6 +187,7 @@ async function loadDashboard() {
   const unattributedFills = Number(paperPerformanceMeta?.unattributed_fill_count || 0), reconciliationAlert = unattributedFills ? `<div class="callout reconciliation-alert"><strong>Broker reconciliation needs attention</strong><br>${unattributedFills} recent Alpaca fill${unattributedFills === 1 ? " is" : "s are"} not attributed to a BotGarden bot. Review Activity before judging bot-level P&amp;L.</div>` : "";
   content.innerHTML = `
     ${reconciliationAlert}
+    <div class="overview-toolbar"><div><span class="eyebrow">RESEARCH</span><h2>Paper portfolio overview</h2><p>Refresh comparable evidence across the entire garden.</p></div><button class="primary" data-backtest-all ${batchBacktestRunning ? "disabled" : ""}>${batchBacktestRunning ? "Backtesting all…" : "Backtest all · 30 days"}</button></div>
     ${renderActionCenter(operational)}
     <div class="cards">
       <div class="card metric"><span class="label">PAPER EQUITY</span><strong>${account ? money(account.equity) : "—"}</strong><div class="subtle">${snapshotMessage}</div></div>
@@ -736,6 +739,30 @@ function randomSchedule(strategy, risk) {
 async function autoBacktest(botId, marketDays = 5) {
   const end = new Date(); end.setUTCDate(end.getUTCDate() - 1); end.setUTCHours(23, 59, 0, 0); const start = new Date(end); start.setUTCDate(start.getUTCDate() - Math.ceil(Number(marketDays) * 1.6 + 10));
   return invoke("backtest-bot", { botId, start: start.toISOString(), end: end.toISOString(), marketDays: Number(marketDays) });
+}
+
+async function backtestAllBots30Days(button) {
+  if (batchBacktestRunning || !bots.length) return;
+  batchBacktestRunning = true;
+  button.disabled = true;
+  button.textContent = "Preparing 30-day batch…";
+  const targets = [...bots], end = new Date();
+  end.setUTCDate(end.getUTCDate() - 1); end.setUTCHours(23, 59, 0, 0);
+  const start = new Date(end); start.setUTCDate(start.getUTCDate() - 30);
+  modal.showModal();
+  $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Backtesting the whole garden</h3><p>${targets.length} bots · previous 30 calendar days · options use signal-only validation</p></div></div><div class="modal-body"><div id="all-backtest-progress" class="bulk-progress"><span></span><strong>Starting…</strong></div><div class="batch-test-counts"><span><b id="batch-completed">0</b> completed</span><span><b id="batch-failed">0</b> failed</span></div><p class="form-message" id="all-backtest-message">Keep this page open while the batch runs.</p></div>`;
+  let completed = 0, failed = 0;
+  for (const bot of targets) {
+    const progress = $("#all-backtest-progress");
+    if (progress) { progress.querySelector("strong").textContent = `Testing ${bot.name} · ${completed + failed + 1} of ${targets.length}`; progress.querySelector("span").style.width = `${(completed + failed) / targets.length * 100}%`; }
+    try { await invoke("backtest-bot", { botId: bot.id, start: start.toISOString(), end: end.toISOString() }); completed++; }
+    catch (error) { failed++; console.warn(`Batch backtest failed for ${bot.name}`, error); }
+    $("#batch-completed") && ($("#batch-completed").textContent = completed);
+    $("#batch-failed") && ($("#batch-failed").textContent = failed);
+  }
+  batchBacktestRunning = false;
+  await loadDashboard();
+  $("#modal-content").innerHTML = `<div class="modal-head"><div><h3>Garden backtest complete</h3><p>Results are saved and rankings have been refreshed.</p></div><button type="button" class="icon-button" data-close-modal>×</button></div><div class="modal-body"><div class="batch-complete"><strong>${completed}</strong><span>bots completed across the previous 30 calendar days</span></div>${failed ? `<div class="callout">${failed} bot${failed === 1 ? "" : "s"} could not be tested. You can retry the batch or test those bots individually.</div>` : ""}</div><div class="modal-foot"><button class="primary" data-close-modal>Done</button></div>`;
 }
 
 async function showStockStrategyForm() {
