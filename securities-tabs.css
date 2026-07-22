@@ -1,0 +1,4 @@
+.securities-switch { display: inline-flex; gap: 6px; padding: 5px; margin-bottom: 22px; background: #e8eee9; border-radius: 12px; }
+.securities-switch button { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--muted); padding: 10px 17px; border-radius: 9px; font-weight: 700; }
+.securities-switch button.active { background: white; color: var(--ink); box-shadow: 0 2px 8px rgba(20,56,44,.09); }
+.securities-switch button span { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 99px; background: rgba(31,107,79,.1); color: var(--green); font-size: 11px; }
