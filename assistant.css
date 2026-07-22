@@ -80,6 +80,14 @@
 .unmanaged-actions { display: flex; gap: 10px; padding: 15px 16px 8px; }
 .unmanaged-card > p { margin: 3px 16px 15px; }
 
+.execution-example { border: 1px solid var(--border, #dfe6e1); border-radius: 11px; overflow-x: auto; }
+.execution-example table { border-collapse: collapse; font-size: .72rem; min-width: 760px; width: 100%; }
+.execution-example th { background: #edf5ef; color: #3d554a; font-size: .64rem; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+.execution-example th,
+.execution-example td { border-bottom: 1px solid var(--border, #dfe6e1); padding: 10px 12px; vertical-align: top; }
+.execution-example tbody tr:last-child td { border-bottom: 0; }
+.execution-example td:first-child { color: var(--green, #176b4b); font-weight: 800; width: 26px; }
+
 .today-center .section-head,
 .overlap-map .section-head {
   align-items: flex-end;
