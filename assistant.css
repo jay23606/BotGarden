@@ -139,6 +139,14 @@
   padding: 16px;
 }
 
+.overlap-grid article.overlap-high { border-color: #dfb1aa; box-shadow: inset 0 3px #c65a4c; }
+.overlap-grid article.overlap-moderate { border-color: #e5cf9f; box-shadow: inset 0 3px #c68b2f; }
+.overlap-rank { align-items: center; display: flex; justify-content: space-between; }
+.overlap-rank b { color: var(--green, #176b4b); font-size: 1rem; }
+.overlap-rank span { background: #edf4ef; border-radius: 99px; color: #42574d; font-size: .65rem; font-weight: 800; padding: 4px 8px; }
+.overlap-high .overlap-rank span { background: #fae9e6; color: #9d4037; }
+.overlap-moderate .overlap-rank span { background: #fff2d8; color: #875b18; }
+
 .overlap-grid article > span {
   color: var(--muted, #66756e);
   font-size: .7rem;
