@@ -24,6 +24,25 @@
 .batch-complete { align-items: center; display: flex; gap: 14px; padding: 12px 0; }
 .batch-complete strong { color: var(--green, #176b4b); font-size: 2.4rem; }
 
+.benchmark-comparison {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1.35fr repeat(3, 1fr);
+}
+
+.benchmark-comparison > div {
+  background: #f8faf8;
+  border: 1px solid var(--border, #dfe6e1);
+  border-radius: 10px;
+  padding: 13px;
+}
+
+.benchmark-comparison span,
+.benchmark-comparison small { color: var(--muted, #66756e); display: block; font-size: .68rem; }
+.benchmark-comparison span { letter-spacing: .05em; text-transform: uppercase; }
+.benchmark-comparison strong { display: block; font-size: 1rem; margin: 6px 0 3px; }
+.benchmark-note { color: var(--muted, #66756e); font-size: .72rem; margin: 7px 2px 18px; }
+
 .today-center .section-head,
 .overlap-map .section-head {
   align-items: flex-end;
@@ -98,6 +117,7 @@
 @media (max-width: 620px) {
   .overview-toolbar { align-items: stretch; flex-direction: column; }
   .overview-toolbar button { width: 100%; }
+  .benchmark-comparison { grid-template-columns: 1fr 1fr; }
   .action-item { align-items: stretch; flex-direction: column; gap: 12px; }
   .action-item button { width: 100%; }
   .today-center .section-head,
