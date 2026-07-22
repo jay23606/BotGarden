@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
         if (!brokerOrder) continue;
         if (localOrder.status !== brokerOrder.status) {
           await admin.from("bg_orders").update({ status: brokerOrder.status, raw_response: brokerOrder }).eq("id", localOrder.id);
+          if (localOrder.bot_id) await admin.from("bg_bot_events").insert({ bot_id: localOrder.bot_id, user_id: user.id, event_type: "broker_order_status_changed", severity: ["rejected", "suspended", "expired"].includes(brokerOrder.status) ? "error" : "info", message: `Alpaca order changed from ${localOrder.status || "unknown"} to ${brokerOrder.status}`, details: { broker_order_id: localOrder.broker_order_id, previous_status: localOrder.status, status: brokerOrder.status, filled_quantity: Number(brokerOrder.filled_qty || 0), filled_average_price: brokerOrder.filled_avg_price == null ? null : Number(brokerOrder.filled_avg_price) } });
           reconciledOrders++;
         }
         if (localOrder.trade_id && brokerOrder.status === "filled") {
