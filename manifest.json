@@ -1,9 +1,18 @@
 {
   "name": "BotGarden",
   "short_name": "BotGarden",
-  "start_url": "./",
+  "id": "./",
+  "description": "Build, backtest, and paper trade stock, option, and crypto bots with Alpaca.",
+  "start_url": "./?source=pwa",
+  "scope": "./",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#f4f7f2",
   "theme_color": "#15382c",
-  "icons": []
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
 }
