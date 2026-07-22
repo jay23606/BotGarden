@@ -87,6 +87,8 @@ document.addEventListener("click", (event) => {
   const securitiesTab=event.target.closest("[data-securities-filter]");if(securitiesTab){securitiesFilter=securitiesTab.dataset.securitiesFilter;renderSecuritiesWorkspace();}
   const closePosition=event.target.closest("[data-close-position]");if(closePosition)closeMarketPosition(closePosition.dataset.closePosition,closePosition);
   const cancelOrder=event.target.closest("[data-cancel-order]");if(cancelOrder)cancelPendingOrder(cancelOrder.dataset.cancelOrder,cancelOrder);
+  const closeUnmanaged=event.target.closest("[data-close-unmanaged-all]");if(closeUnmanaged)closeAllUnmanagedPositions(closeUnmanaged);
+  const cancelUnmanaged=event.target.closest("[data-cancel-unmanaged-all]");if(cancelUnmanaged)cancelAllUnmanagedOrders(cancelUnmanaged);
   if (event.target.closest("[data-connect]")) showConnectionForm();
   if (event.target.closest('[data-pwa-action="install"]') || event.target.closest("[data-install-pwa]")) requestPwaInstall();
   if (event.target.closest('[data-pwa-action="reload"]')) location.reload();
@@ -150,6 +152,13 @@ function renderOverlapMap() {
   clusters.sort((a,b)=>b.members.length-a.members.length); return `<section class="overlap-map"><div class="section-head"><div><h3>Bot overlap map</h3><span class="subtle">Shared symbols, benchmarks, direction, and strategy families</span></div><span>${clusters.length} cluster${clusters.length===1?"":"s"}</span></div>${clusters.length?`<div class="overlap-grid">${clusters.slice(0,8).map((cluster)=>`<article><span>${escapeHtml(cluster.kind)}</span><strong>${escapeHtml(cluster.name)}</strong><b>${cluster.members.length} bots</b><p>${escapeHtml(cluster.note)}</p><small>${cluster.members.slice(0,5).map((bot)=>escapeHtml(bot.name)).join(" · ")}${cluster.members.length>5?` · +${cluster.members.length-5} more`:""}</small></article>`).join("")}</div>`:`<div class="card all-clear"><strong>No material overlap clusters detected</strong><span>Current bot configurations are not concentrated by the transparent grouping rules.</span></div>`}</section>`;
 }
 
+function renderUnmanagedExposure(portfolio = {}, observed = {}) {
+  const attribution = observed.position_attribution || [], unmanaged = attribution.filter((item) => item.classification === "unmanaged"), mixed = attribution.filter((item) => item.classification === "mixed"), pending = (portfolio.pending_orders || []).filter((order) => order.attribution === "unmanaged");
+  const positionRows = unmanaged.map((item) => { const position = (portfolio.positions || []).find((candidate) => candidate.symbol === item.symbol) || {}; return `<div class="unmanaged-row"><div><strong>${escapeHtml(item.symbol)}</strong><span>${escapeHtml(item.asset_class)} · ${Number(item.broker_quantity).toLocaleString(undefined,{maximumFractionDigits:8})} qty</span></div><div><span>Market value</span><strong>${money(position.market_value)}</strong></div><div><span>Unrealized P&amp;L</span><strong class="${Number(position.unrealized_pl)>0?"profit":Number(position.unrealized_pl)<0?"loss":""}">${money(position.unrealized_pl)}</strong></div><b class="attribution-badge ${item.confidence}">${escapeHtml(item.confidence)}</b></div>`; }).join("");
+  const orderRows = pending.slice(0, 8).map((order) => `<div class="unmanaged-order"><strong>${escapeHtml(order.symbol)}</strong><span>${escapeHtml(order.side || "multi-leg")} · ${escapeHtml(order.order_type || "order")} · ${escapeHtml(order.status)}</span></div>`).join("");
+  return `<section class="unmanaged-exposure"><div class="section-head"><div><h3>Unmanaged broker exposure</h3><span class="subtle">Alpaca positions and orders not associated with a BotGarden order record</span></div><span>${unmanaged.length} position${unmanaged.length===1?"":"s"} · ${pending.length} order${pending.length===1?"":"s"}</span></div><div class="card unmanaged-card">${positionRows || `<div class="empty compact"><strong>No wholly unmanaged positions detected</strong></div>`}${mixed.length ? `<div class="mixed-warning"><strong>${mixed.length} mixed position${mixed.length===1?"":"s"} require individual review.</strong> Bot-managed and unmanaged quantities share the same Alpaca symbol, so bulk closing would affect both.</div>` : ""}${orderRows ? `<div class="unmanaged-orders">${orderRows}${pending.length>8?`<small>+${pending.length-8} more</small>`:""}</div>` : ""}<div class="unmanaged-actions"><button class="danger-button" data-close-unmanaged-all ${unmanaged.length?"":"disabled"}>Close unmanaged positions</button><button class="secondary" data-cancel-unmanaged-all ${pending.length?"":"disabled"}>Cancel unmanaged orders</button></div><p>“Close” covers selling long positions and buying back short positions. Stock and option closes may fail while their markets are closed; crypto can close continuously. Estimated attribution reflects incomplete older fill history.</p></div></section>`;
+}
+
 async function loadDashboard() {
   const [{ data: botData }, connection, { data: backtests }, portfolio, observedPerformance, operational] = await Promise.all([
     supabase.from("bg_bots").select("id,name,bot_type,status,asset_class,symbol,direction,max_allocation,max_active_trades,start_condition,take_profit_pct,stop_loss_pct,cooldown_seconds,session_policy,created_at").order("created_at", { ascending: false }),
@@ -206,6 +215,7 @@ async function loadDashboard() {
     ${renderEquityHistory(portfolio?.history || [])}
     <div class="section-head"><h3>Portfolio risk health</h3><span class="subtle">Advisory indicators · not automatic limits</span></div>
     ${renderRiskHealth(account, positions)}
+    ${renderUnmanagedExposure(portfolio, observedPerformance)}
     ${renderOverlapMap()}
     <div class="section-head"><h3>Open exposure</h3></div>
     <div class="card overview-assets">${assetSummary}</div>
@@ -498,6 +508,12 @@ function showBacktestForm(botId) {
 let activityTimer = null;
 async function closeMarketPosition(symbol,button){button.disabled=true;button.textContent="Closing…";try{await invoke("close-position",{symbol});await loadActivity();}catch(error){button.disabled=false;button.textContent="Close at market";button.title=error.message||"Unable to close position";alert(error.message||"Unable to close position");}}
 async function cancelPendingOrder(orderId,button){button.disabled=true;button.textContent="Canceling…";try{await invoke("cancel-order",{orderId});await loadActivity();}catch(error){button.disabled=false;button.textContent="Cancel order";button.title=error.message||"Unable to cancel order";alert(error.message||"Unable to cancel order");}}
+async function closeAllUnmanagedPositions(button){
+  button.disabled=true;button.textContent="Checking attribution…";const performance=await invoke("bot-performance",{}).catch(error=>({error:error.message,position_attribution:[]})),targets=(performance.position_attribution||[]).filter(item=>item.classification==="unmanaged"),failures=[];for(let index=0;index<targets.length;index++){button.textContent=`Closing ${index+1} of ${targets.length}…`;try{await invoke("close-position",{symbol:targets[index].symbol})}catch(error){failures.push(`${targets[index].symbol}: ${error.message||"failed"}`)}}await loadDashboard();showPwaNotice(failures.length?`Closed ${targets.length-failures.length} unmanaged positions; ${failures.length} could not close (often because the market is closed).`:`Closed ${targets.length} unmanaged position${targets.length===1?"":"s"}.`);
+}
+async function cancelAllUnmanagedOrders(button){
+  button.disabled=true;button.textContent="Checking orders…";const snapshot=await invoke("portfolio-snapshot",{}).catch(error=>({error:error.message,pending_orders:[]})),targets=(snapshot.pending_orders||[]).filter(order=>order.attribution==="unmanaged"),failures=[];for(let index=0;index<targets.length;index++){button.textContent=`Canceling ${index+1} of ${targets.length}…`;try{await invoke("cancel-order",{orderId:targets[index].id})}catch(error){failures.push(targets[index].id)}}await loadDashboard();showPwaNotice(failures.length?`Canceled ${targets.length-failures.length} unmanaged orders; ${failures.length} could not be canceled.`:`Canceled ${targets.length} unmanaged order${targets.length===1?"":"s"}.`);
+}
 function fillAssetClass(fill, bot) {
   if (bot?.asset_class) return bot.asset_class;
   if (/\d{6}[CP]\d{8}$/.test(fill.symbol || "")) return "option";

@@ -111,9 +111,11 @@ Deno.serve(async (req) => {
       legs: (order.legs || []).map((leg: any) => ({ symbol: leg.symbol, side: leg.side, ratio_qty: leg.ratio_qty, position_intent: leg.position_intent })),
     }));
     let reconciledOrders = 0;
+    const managedBrokerOrderIds = new Set<string>();
     const brokerOrderIds = rawOrders.map((order: any) => order.id).filter(Boolean);
     if (brokerOrderIds.length) {
       const { data: localOrders } = await admin.from("bg_orders").select("id,trade_id,broker_order_id,status").eq("user_id", user.id).in("broker_order_id", brokerOrderIds);
+      for (const localOrder of localOrders || []) if (localOrder.broker_order_id) managedBrokerOrderIds.add(localOrder.broker_order_id);
       const brokerOrders = new Map(rawOrders.map((order: any) => [order.id, order]));
       for (const localOrder of localOrders || []) {
         const brokerOrder: any = brokerOrders.get(localOrder.broker_order_id);
@@ -128,6 +130,9 @@ Deno.serve(async (req) => {
           else if (trade?.status === "closing") await admin.from("bg_trades").update({ status: "closed", closed_at: brokerOrder.filled_at || new Date().toISOString() }).eq("id", localOrder.trade_id);
         }
       }
+    }
+    for (const order of pendingOrders) {
+      (order as any).attribution = managedBrokerOrderIds.has(order.id) ? "managed" : "unmanaged";
     }
     return json({ connected: true, account, positions, history, fills, pending_orders: pendingOrders, reconciled_orders: reconciledOrders, as_of: new Date().toISOString() });
   } catch (error) {

@@ -92,7 +92,15 @@ Deno.serve(async (req) => {
       performance.total_pnl = performance.realized_pnl + performance.unrealized_pnl;
       performance.return_on_open_cost_pct = performance.open_cost ? performance.total_pnl / performance.open_cost * 100 : null;
     }
-    return json({ connected: true, bots: [...state.values()], unattributed_fill_count: unattributed, activity_count: fills.length, truncated, as_of: new Date().toISOString() });
+    const positionAttribution = (positions || []).map((position: any) => {
+      const brokerQty = (position.side === "short" ? -1 : 1) * Math.abs(Number(position.qty || 0));
+      const lots = globalLots.get(position.symbol) || globalLots.get(String(position.symbol).replace("/", "")) || [];
+      const attributedQty = lots.reduce((sum: number, lot: any) => sum + Number(lot.qty || 0), 0);
+      const unmanagedQty = brokerQty - attributedQty, tolerance = 1e-8;
+      const classification = Math.abs(attributedQty) < tolerance ? "unmanaged" : Math.abs(unmanagedQty) < tolerance ? "managed" : "mixed";
+      return { symbol: position.symbol, asset_class: position.asset_class === "crypto" ? "crypto" : position.asset_class === "us_option" ? "option" : "equity", broker_quantity: brokerQty, attributed_quantity: attributedQty, unmanaged_quantity: unmanagedQty, classification, confidence: truncated ? "estimated" : "verified" };
+    });
+    return json({ connected: true, bots: [...state.values()], position_attribution: positionAttribution, unattributed_fill_count: unattributed, activity_count: fills.length, truncated, as_of: new Date().toISOString() });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Unable to calculate bot performance" }, 500);
   }
