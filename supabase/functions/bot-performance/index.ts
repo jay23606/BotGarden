@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const b64 = (value: string) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+const symbolKey = (value: unknown) => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 async function decrypt(value: string, iv: string, key: CryptoKey) { return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(iv) }, key, b64(value))); }
 async function alpaca(url: string, apiKey: string, secret: string) {
   const response = await fetch(url, { headers: { "APCA-API-KEY-ID": apiKey, "APCA-API-SECRET-KEY": secret } });
@@ -57,12 +58,12 @@ Deno.serve(async (req) => {
     }
     fills.sort((a, b) => new Date(a.transaction_time).valueOf() - new Date(b.transaction_time).valueOf());
     const marks = new Map<string, number>();
-    for (const position of positions || []) { marks.set(position.symbol, Number(position.current_price)); marks.set(String(position.symbol).replace("/", ""), Number(position.current_price)); }
+    for (const position of positions || []) marks.set(symbolKey(position.symbol), Number(position.current_price));
     const state = new Map<string, any>(), globalLots = new Map<string, any[]>();
     for (const bot of bots || []) state.set(bot.id, { bot_id: bot.id, fill_count: 0, realized_pnl: 0, unrealized_pnl: 0, total_pnl: 0, open_cost: 0, closed_quantity: 0, mark_to_market_complete: true, first_fill_at: null, last_fill_at: null });
     let unattributed = 0;
     for (const fill of fills) {
-      const botId = orderBot.get(fill.order_id), symbol = fill.symbol, price = Number(fill.price), absoluteQty = Number(fill.qty), signedQty = fill.side === "buy" ? absoluteQty : -absoluteQty;
+      const botId = orderBot.get(fill.order_id), symbol = symbolKey(fill.symbol), price = Number(fill.price), absoluteQty = Number(fill.qty), signedQty = fill.side === "buy" ? absoluteQty : -absoluteQty;
       if (!Number.isFinite(price) || !Number.isFinite(signedQty) || !signedQty) continue;
       const lots = globalLots.get(symbol) || []; let remaining = signedQty; const touched = new Set<string>();
       while (remaining && lots.length && Math.sign(lots[0].qty) !== Math.sign(remaining)) {
@@ -81,7 +82,7 @@ Deno.serve(async (req) => {
       globalLots.set(symbol, lots);
     }
     for (const [symbol, lots] of globalLots) {
-      const mark = marks.get(symbol) || marks.get(String(symbol).replace("/", ""));
+      const mark = marks.get(symbol);
       for (const lot of lots) {
         const performance = state.get(lot.bot_id); performance.open_cost += Math.abs(lot.qty * lot.price);
         if (!mark) performance.mark_to_market_complete = false;
@@ -94,7 +95,7 @@ Deno.serve(async (req) => {
     }
     const positionAttribution = (positions || []).map((position: any) => {
       const brokerQty = (position.side === "short" ? -1 : 1) * Math.abs(Number(position.qty || 0));
-      const lots = globalLots.get(position.symbol) || globalLots.get(String(position.symbol).replace("/", "")) || [];
+      const lots = globalLots.get(symbolKey(position.symbol)) || [];
       const attributedQty = lots.reduce((sum: number, lot: any) => sum + Number(lot.qty || 0), 0);
       const unmanagedQty = brokerQty - attributedQty, tolerance = 1e-8;
       const classification = Math.abs(attributedQty) < tolerance ? "unmanaged" : Math.abs(unmanagedQty) < tolerance ? "managed" : "mixed";
