@@ -841,7 +841,7 @@ async function showStockStrategyForm() {
       const labels={stock_grid:"Adaptive Grid",scheduled_accumulation:"Scheduled Accumulator",smart_trailing:"Smart Trailing Reversal"};const conditions=strategy==="smart_trailing"?[{type:"trailing_reversal",timeframe:"5Min",parameters:config}]:[{type:"immediate",timeframe:strategy==="scheduled_accumulation"?"1Day":"15Min",parameters:{}}];
       const {data:bot,error}=await supabase.from("bg_bots").insert({user_id:session.user.id,name:`${symbol} ${labels[strategy]}`,bot_type:strategy==="stock_grid"?"grid":"signal",status:"active",broker:"alpaca",environment:"paper",asset_class:"equity",symbol,direction:"long",max_allocation:risk,max_active_trades:strategy==="stock_grid"?config.levels:1,start_condition:{operator:"AND",conditions,generated_strategy:strategy,strategy_config:config,randomized_fields:{Strategy:labels[strategy],...config}},take_profit_pct:strategy==="scheduled_accumulation"?12:strategy==="smart_trailing"?pick([3,4,5,6]):null,stop_loss_pct:strategy==="smart_trailing"?pick([2,3,4]):null,cooldown_seconds:strategy==="scheduled_accumulation"?config.interval_days*86400:300,session_policy:"regular"}).select().single();if(error)throw error;
       if(strategy==="stock_grid"){const half=config.range_pct/100;const{error:gridError}=await supabase.from("bg_grid_configs").insert({bot_id:bot.id,user_id:session.user.id,lower_price:price*(1-half),upper_price:price*(1+half),grid_levels:config.levels,order_amount:config.order_amount,spacing_mode:"geometric",recenter_enabled:true,fee_bps:1});if(gridError){await supabase.from("bg_bots").delete().eq("id",bot.id);throw gridError;}}
-      button.textContent="Backtesting…";try{await autoBacktest(bot.id,Number(data.get("days")))}catch(error){console.warn("Specialized stock backtest failed",error)}modal.close();await loadDashboard();switchView("bots");
+      button.textContent="Backtesting…";try{await autoBacktest(bot.id,Number(data.get("days")))}catch(error){console.warn("Specialized stock backtest failed",error)}securitiesFilter="equity";modal.close();await refreshWorkspace("bots");
     }catch(error){$("#stock-strategy-message").textContent=error.message||"Unable to create strategy";button.disabled=false;button.textContent="Create and backtest";}
   });
 }
@@ -878,7 +878,7 @@ async function showRandomBotForm() {
     if (stepError) { $("#random-message").textContent = stepError.message; button.disabled = false; return; }
     button.textContent = `Backtesting ${data.get("backtestDays")} market days…`;
     try { await autoBacktest(bot.id, data.get("backtestDays")); } catch (error) { console.warn("Automatic backtest failed", error); }
-    modal.close(); await loadDashboard();
+    securitiesFilter = "equity"; modal.close(); await refreshWorkspace("bots");
   });
 }
 
@@ -993,7 +993,7 @@ async function showRandomOptionBotForm() {
     if (spreadError) { await supabase.from("bg_bots").delete().eq("id", bot.id); $("#option-message").textContent = spreadError.message; button.disabled = false; return; }
     button.textContent = `Testing ${data.get("backtestDays")} market days…`;
     try { await autoBacktest(bot.id, data.get("backtestDays")); } catch (error) { console.warn("Automatic backtest failed", error); }
-    modal.close(); await loadDashboard();
+    securitiesFilter = "option"; modal.close(); await refreshWorkspace("bots");
   });
 }
 
@@ -1042,7 +1042,7 @@ function showBulkRandomForm() {
       } catch (error) { failures++; console.warn("Bulk bot creation failed", error); }
       completed++; update(`${completed} of ${totalCount} complete`);
     }
-    await loadDashboard();
+    await refreshWorkspace("bots");
     if (failures) { $("#bulk-message").textContent = `${totalCount - failures} bots completed; ${failures} failed. Close this window and retry to add replacements.`; button.textContent = "Completed with warnings"; button.disabled = true; }
     else { modal.close(); }
   });
@@ -1107,7 +1107,7 @@ function showBotForm() {
     const rows = schedule.map((s) => ({ bot_id: bot.id, step_number: s.step, deviation_pct: s.deviation, order_amount: s.amount }));
     const { error: stepError } = await supabase.from("bg_averaging_steps").insert(rows);
     if (stepError) { $("#bot-message").textContent = stepError.message; button.disabled = false; return; }
-    modal.close(); await loadDashboard();
+    securitiesFilter = data.get("assetClass"); modal.close(); await refreshWorkspace("bots");
   });
 }
 
