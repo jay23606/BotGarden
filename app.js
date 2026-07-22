@@ -127,6 +127,27 @@ function workerHealthBlock(operational = {}) {
   return `<div class="card worker-health"><div class="section-head compact-head"><h3>Scheduled-worker health</h3><span class="status ${operational.entries_paused ? "paused" : ""}">${operational.entries_paused ? "ENTRIES PAUSED" : "ENTRIES ENABLED"}</span></div>${rows}</div>`;
 }
 
+function renderActionCenter(operational = {}) {
+  const actions = [], add = (priority, tone, title, detail, action = "") => actions.push({ priority, tone, title, detail, action });
+  if (operational.entries_paused) add(100, "warning", "New entries are globally paused", "Risk exits continue, but no bot can submit a new entry until you resume them.", `<button class="secondary" data-view="settings">Review controls</button>`);
+  const expected = { "entry-runner": 12, "risk-monitor": 3 }; Object.entries(expected).forEach(([mode, minutes]) => { const beat = (operational.health || []).find((item) => item.worker_mode === mode), age = beat?.completed_at ? (Date.now() - new Date(beat.completed_at).valueOf()) / 60000 : Infinity; if (age > minutes) add(95, "danger", `${mode === "entry-runner" ? "Entry runner" : "Risk monitor"} needs attention`, beat ? `Last completed ${Math.floor(age)} minutes ago.` : "No completed heartbeat has been recorded yet.", `<button class="secondary" data-view="settings">View health</button>`); });
+  const unattributed = Number(paperPerformanceMeta?.unattributed_fill_count || 0); if (unattributed) add(90, "danger", `${unattributed} unattributed Alpaca fill${unattributed === 1 ? "" : "s"}`, "Resolve attribution before relying on bot-level paper P&L.", `<button class="secondary" data-view="activity">Review Activity</button>`);
+  bots.filter((bot) => botMaturity(bot).id === "degraded").slice(0, 3).forEach((bot) => add(85, "danger", `Review degraded bot: ${bot.name}`, botMaturity(bot).note, `<button class="secondary" data-bot-details="${bot.id}">Inspect bot</button>`));
+  bots.filter((bot) => ["candidate", "proven"].includes(botMaturity(bot).id) && bot.status !== "active").slice(0, 3).forEach((bot) => add(70, "positive", `${bot.name} is ${botMaturity(bot).label.toLowerCase()} but OFF`, "Review its evidence and decide whether to resume controlled paper observation.", `<button class="secondary" data-bot-details="${bot.id}">Review evidence</button>`));
+  bots.filter((bot) => botMaturity(bot).id === "experimental" && botConfidence(bot).coverageDays < 10).sort((a,b)=>botConfidence(b).score-botConfidence(a).score).slice(0, 3).forEach((bot) => { const confidence = botConfidence(bot), needed = Math.max(1, 10 - confidence.coverageDays); add(40, "", `${bot.name} needs broader history`, `Test at least ${needed} additional unique market day${needed === 1 ? "" : "s"} before historical validation.`, `<button class="secondary" data-backtest="${bot.id}">Add coverage</button>`); });
+  actions.sort((a,b)=>b.priority-a.priority); const visible = actions.slice(0, 8);
+  return `<section class="today-center"><div class="section-head"><div><span class="eyebrow">TODAY</span><h3>Recommended next actions</h3></div><span class="subtle">Advisory only · highest priority first</span></div>${visible.length ? `<div class="action-grid">${visible.map((item)=>`<article class="action-item ${item.tone}"><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.detail)}</p></div>${item.action}</article>`).join("")}</div>` : `<div class="card all-clear"><strong>No urgent actions</strong><span>Workers, attribution, evidence stages, and paper controls currently look orderly.</span></div>`}</section>`;
+}
+
+function renderOverlapMap() {
+  const clusters = [], addCluster = (kind, name, members, note) => { if (members.length > 1) clusters.push({ kind, name, members, note }); }, by = (key) => bots.reduce((map, bot) => { const value = key(bot); if (!value) return map; map.set(value, [...(map.get(value) || []), bot]); return map; }, new Map());
+  by((bot)=>bot.symbol).forEach((members,name)=>addCluster("Shared symbol",name,members,"These bots can stack exposure to the same underlying."));
+  by((bot)=>bot.start_condition?.conditions?.find((condition)=>["relative_strength","market_regime"].includes(condition.type))?.parameters?.benchmark).forEach((members,name)=>{if(members.length>=3)addCluster("Shared benchmark",name,members,"Signals depend on the same broad-market reference and may react together.");});
+  by((bot)=>bot.start_condition?.generated_strategy).forEach((members,name)=>{if(members.length>=5)addCluster("Crowded family",String(name).replaceAll("_"," "),members,"Many candidates share the same strategy thesis; confidence applies a selection penalty while evidence is short.");});
+  const directional = bots.filter((bot)=>bot.direction==="long"); if (directional.length >= 5 && directional.length / Math.max(1,bots.length) >= .75) clusters.push({kind:"Directional concentration",name:"Long bias",members:directional,note:`${directional.length} of ${bots.length} bots are long-biased.`});
+  clusters.sort((a,b)=>b.members.length-a.members.length); return `<section class="overlap-map"><div class="section-head"><div><h3>Bot overlap map</h3><span class="subtle">Shared symbols, benchmarks, direction, and strategy families</span></div><span>${clusters.length} cluster${clusters.length===1?"":"s"}</span></div>${clusters.length?`<div class="overlap-grid">${clusters.slice(0,8).map((cluster)=>`<article><span>${escapeHtml(cluster.kind)}</span><strong>${escapeHtml(cluster.name)}</strong><b>${cluster.members.length} bots</b><p>${escapeHtml(cluster.note)}</p><small>${cluster.members.slice(0,5).map((bot)=>escapeHtml(bot.name)).join(" · ")}${cluster.members.length>5?` · +${cluster.members.length-5} more`:""}</small></article>`).join("")}</div>`:`<div class="card all-clear"><strong>No material overlap clusters detected</strong><span>Current bot configurations are not concentrated by the transparent grouping rules.</span></div>`}</section>`;
+}
+
 async function loadDashboard() {
   const [{ data: botData }, connection, { data: backtests }, portfolio, observedPerformance, operational] = await Promise.all([
     supabase.from("bg_bots").select("id,name,bot_type,status,asset_class,symbol,direction,max_allocation,max_active_trades,start_condition,take_profit_pct,stop_loss_pct,cooldown_seconds,session_policy,created_at").order("created_at", { ascending: false }),
@@ -164,6 +185,7 @@ async function loadDashboard() {
   const unattributedFills = Number(paperPerformanceMeta?.unattributed_fill_count || 0), reconciliationAlert = unattributedFills ? `<div class="callout reconciliation-alert"><strong>Broker reconciliation needs attention</strong><br>${unattributedFills} recent Alpaca fill${unattributedFills === 1 ? " is" : "s are"} not attributed to a BotGarden bot. Review Activity before judging bot-level P&amp;L.</div>` : "";
   content.innerHTML = `
     ${reconciliationAlert}
+    ${renderActionCenter(operational)}
     <div class="cards">
       <div class="card metric"><span class="label">PAPER EQUITY</span><strong>${account ? money(account.equity) : "—"}</strong><div class="subtle">${snapshotMessage}</div></div>
       <div class="card metric"><span class="label">ACTIVE BOTS</span><strong>${active}</strong><div class="subtle">${bots.length} configured</div></div>
@@ -181,6 +203,7 @@ async function loadDashboard() {
     ${renderEquityHistory(portfolio?.history || [])}
     <div class="section-head"><h3>Portfolio risk health</h3><span class="subtle">Advisory indicators · not automatic limits</span></div>
     ${renderRiskHealth(account, positions)}
+    ${renderOverlapMap()}
     <div class="section-head"><h3>Open exposure</h3></div>
     <div class="card overview-assets">${assetSummary}</div>
     <div class="section-head"><h3>Automation summary</h3></div>
