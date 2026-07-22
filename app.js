@@ -164,7 +164,7 @@ async function loadDashboard() {
   backtestSummary = new Map();
   latestBacktest = new Map();
   (backtests || []).forEach((test) => { const current = backtestSummary.get(test.bot_id) || { seconds: 0, runs: 0, signalOnlyRuns: 0, signals: 0, trades: 0, wins: 0, losses: 0, positiveRuns: 0, evaluatedRuns: 0, maxDrawdown: 0, validationReturns: [], testedDates: new Set(), pnl: 0, capital: 0, profitPct: null, estimatedPnl: 0, estimatedCapital: 0, estimatedPct: null }; current.seconds += Number(test.duration_seconds); current.runs++; (test.daily_regimes || []).forEach((day) => current.testedDates.add(day.date)); current.trades += Number(test.trade_count || 0); current.wins += Number(test.win_count || 0); current.losses += Number(test.loss_count || 0); current.maxDrawdown = Math.max(current.maxDrawdown, Number(test.max_drawdown_pct || 0)); const validation = test.status === "signal_only" ? test.walk_forward?.validation_estimated_return_pct : test.walk_forward?.validation_return_pct; if (validation != null) current.validationReturns.push(Number(validation)); const evaluated = test.status === "signal_only" ? test.estimated_return_pct : test.return_pct; if (evaluated != null) { current.evaluatedRuns++; if (Number(evaluated) > 0) current.positiveRuns++; } if (test.status === "signal_only") { current.signalOnlyRuns++; current.signals += Number(test.signal_count || 0); if (test.estimated_pnl != null) { current.estimatedPnl += Number(test.estimated_pnl); current.estimatedCapital += Number(test.initial_capital); current.estimatedPct = current.estimatedPnl / current.estimatedCapital * 100; } } if (test.net_pnl != null) { current.pnl += Number(test.net_pnl); current.capital += Number(test.initial_capital); current.profitPct = current.capital ? current.pnl / current.capital * 100 : null; } backtestSummary.set(test.bot_id, current); const latest = latestBacktest.get(test.bot_id); if (!latest || new Date(test.created_at) > new Date(latest.created_at)) latestBacktest.set(test.bot_id, test); });
-  bots = botData || []; bots.sort((a, b) => botConfidence(b, bots).score - botConfidence(a, bots).score || new Date(b.created_at) - new Date(a.created_at));
+  bots = botData || []; bots.sort(compareBotRank);
   updatePruneButton();
   const active = bots.filter((b) => b.status === "active").length;
   const positions = portfolio?.positions || [], account = portfolio?.account;
@@ -262,6 +262,22 @@ function botMaturity(bot) {
   return { id: "experimental", label: "Experimental", note: "Still gathering sufficient independent historical evidence." };
 }
 
+function compareBotRank(a, b) {
+  const confidenceA = botConfidence(a), confidenceB = botConfidence(b);
+  if (confidenceA.score !== confidenceB.score) return confidenceB.score - confidenceA.score;
+  const summaryA = backtestSummary.get(a.id) || {}, summaryB = backtestSummary.get(b.id) || {};
+  const resultA = a.asset_class === "option" ? summaryA.estimatedPct : summaryA.profitPct;
+  const resultB = b.asset_class === "option" ? summaryB.estimatedPct : summaryB.profitPct;
+  if (Number.isFinite(Number(resultA)) || Number.isFinite(Number(resultB))) {
+    const difference = (Number.isFinite(Number(resultB)) ? Number(resultB) : -Infinity) - (Number.isFinite(Number(resultA)) ? Number(resultA) : -Infinity);
+    if (difference) return difference;
+  }
+  const paperA = Number(paperPerformance.get(a.id)?.total_pnl || 0), paperB = Number(paperPerformance.get(b.id)?.total_pnl || 0);
+  if (paperA !== paperB) return paperB - paperA;
+  if (confidenceA.coverageDays !== confidenceB.coverageDays) return confidenceB.coverageDays - confidenceA.coverageDays;
+  return new Date(b.created_at) - new Date(a.created_at);
+}
+
 function confidenceBadge(bot, rank) { const confidence = botConfidence(bot), maturity = botMaturity(bot); return `<div class="bot-ranking"><div class="confidence-badge score-${Math.floor(confidence.score / 20)}" title="Evidence-weighted score; not a forecast or profit guarantee"><b>#${rank}</b><span>${confidence.score}/100</span><small>${confidence.label}</small></div><span class="maturity-badge ${maturity.id}" title="${escapeHtml(maturity.note)}">${escapeHtml(maturity.label)}</span></div>`; }
 
 function promotionLadder(assetClass) {
@@ -278,7 +294,7 @@ function renderBots() {
     const performanceClass = isOption ? (summary.estimatedPct > 0 ? "profit" : summary.estimatedPct < 0 ? "loss" : "") : (summary.profitPct > 0 ? "profit" : summary.profitPct < 0 ? "loss" : "");
     return `<div class="bot-row"><div><div class="bot-title-line"><div><div class="bot-name">${escapeHtml(bot.name)}</div><div class="subtle">${escapeHtml(bot.symbol)} · ${escapeHtml(bot.bot_type.replaceAll("_", " "))}</div></div>${confidenceBadge(bot, rank)}</div>${paperPnlBlock(bot)}</div><button class="bot-toggle ${isOn ? "on" : ""}" data-toggle-bot="${bot.id}" role="switch" aria-checked="${isOn}"><span></span>${isOn ? "ON" : "OFF"}</button><div><div class="subtle">${isOption ? "ESTIMATED REPLAY" : "BACKTEST PROFIT"}</div><strong class="${performanceClass}">${performance}</strong><div class="subtle">${coverage}</div></div>${stockSparkline(bot)}<div><div class="subtle">MAX ${isOption ? "RISK" : "ALLOCATION"}</div>${money(bot.max_allocation)}</div><div class="row-actions"><button class="icon-action" data-bot-details="${bot.id}" title="View bot details" aria-label="View details for ${escapeHtml(bot.name)}">${actionIcon("details")}</button><button class="icon-action test" data-backtest="${bot.id}" title="${isOption ? "Replay" : "Backtest"} this bot" aria-label="${isOption ? "Replay" : "Backtest"} ${escapeHtml(bot.name)}">${actionIcon("test")}</button><button class="icon-action child" data-child-bot="${bot.id}" title="Add a randomized child and test it over the same number of days" aria-label="Add random child of ${escapeHtml(bot.name)}">${actionIcon("child")}</button><button class="delete-button" data-delete-bot="${bot.id}" title="Remove bot" aria-label="Delete ${escapeHtml(bot.name)}">×</button></div></div>`;
   };
-  const byConfidence = (a, b) => botConfidence(b).score - botConfidence(a).score, stocks = bots.filter((bot) => bot.asset_class === "equity").sort(byConfidence), options = bots.filter((bot) => bot.asset_class === "option").sort(byConfidence);
+  const stocks = bots.filter((bot) => bot.asset_class === "equity").sort(compareBotRank), options = bots.filter((bot) => bot.asset_class === "option").sort(compareBotRank);
   if (securitiesFilter === "option") return options.length ? `<div class="bot-groups"><section><div class="group-heading"><div><h3>Option strategies</h3><p>Ranked by evidence-weighted Bot Confidence Score</p></div><span>${options.length}</span></div><div class="option-explainer">Option scores are capped until real Alpaca paper fills provide evidence. Estimated replay remains a low-confidence pruning aid—not actual historical option P&amp;L.</div><div class="bot-list">${options.map((bot, index) => row(bot, true, index + 1)).join("")}</div></section></div>` : `<div class="empty"><h3>No option bots yet</h3><div>Create or randomize an option strategy to begin.</div></div>`;
   return stocks.length ? `<div class="bot-groups"><section><div class="group-heading"><div><h3>Stock bots</h3><p>Ranked by evidence-weighted Bot Confidence Score</p></div><span>${stocks.length}</span></div><div class="bot-list">${stocks.map((bot, index) => row(bot, false, index + 1)).join("")}</div></section></div>` : `<div class="empty"><h3>No stock bots yet</h3><div>Create or randomize a stock strategy to begin.</div></div>`;
 }
@@ -296,7 +312,7 @@ async function toggleBot(botId) {
 }
 
 function renderCrypto() {
-  const cryptoBots = bots.filter((bot) => bot.asset_class === "crypto").sort((a,b)=>botConfidence(b).score-botConfidence(a).score);
+  const cryptoBots = bots.filter((bot) => bot.asset_class === "crypto").sort(compareBotRank);
   const rows = cryptoBots.map((bot,index) => {
     const summary = backtestSummary.get(bot.id), isOn = bot.status === "active", result = summary?.profitPct == null ? "Not tested" : pct(summary.profitPct);
     const family=bot.start_condition?.generated_strategy||"atr_adaptive_grid",label={crypto_dca:"DCA + safety orders",crypto_regime_allocator:"Regime-gated allocator",crypto_vol_momentum:"Volatility-targeted momentum",crypto_shock_recovery:"Shock + recovery",atr_adaptive_grid:"ATR-adaptive grid",crypto_smart_trailing:"Smart trailing reversal",crypto_scheduled_accumulation:"Volatility-aware accumulation"}[family]||family.replaceAll("_"," ");
