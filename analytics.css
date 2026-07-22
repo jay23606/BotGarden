@@ -21,6 +21,13 @@
 .pending-order-row span, .pending-order-row small { color: var(--muted); font-size: 11px; }
 .order-cancel { border: 1px solid #d7a5a5; background: #fff7f7; color: #913b3b; border-radius: 9px; padding: 8px 10px; font-size: 11px; font-weight: 700; }
 .order-cancel:disabled { opacity: .55; }
+.paper-pnl { display: grid; grid-template-columns: auto auto; justify-content: start; align-items: baseline; gap: 2px 8px; margin-top: 9px; padding: 7px 9px; border-radius: 8px; background: #edf5ef; color: var(--ink); width: max-content; max-width: 100%; }
+.paper-pnl > span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .06em; }
+.paper-pnl > strong { font-size: 14px; }
+.paper-pnl > small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.paper-pnl.profit { background: #e7f5ec; }
+.paper-pnl.loss { background: #fbeaea; }
+.paper-pnl.empty-pnl { background: #f4f6f4; }
 @media (max-width: 700px) {
   .risk-health-row { grid-template-columns: 1fr 1fr; }
   .risk-health-row > :last-child { grid-column: 1 / -1; }
