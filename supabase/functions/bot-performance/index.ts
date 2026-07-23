@@ -21,7 +21,7 @@ Deno.serve(async (req) => {
     const { data: { user } } = await admin.auth.getUser(authorization.replace(/^Bearer\s+/i, ""));
     if (!user) return json({ error: "Invalid session" }, 401);
     const { data: connection } = await admin.from("bg_broker_connections").select("id").eq("user_id", user.id).eq("broker", "alpaca").eq("environment", "paper").eq("status", "connected").maybeSingle();
-    if (!connection) return json({ connected: false, bots: [], unattributed_fill_count: 0 });
+    if (!connection) return json({ connected: false, bots: [], recent_realized: [], unattributed_fill_count: 0 });
     const { data: credentials } = await admin.from("bg_broker_credentials").select("*").eq("connection_id", connection.id).single();
     const raw = b64(Deno.env.get("BG_CREDENTIALS_KEY") || "");
     if (raw.length !== 32) throw new Error("Credential encryption is not configured");
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
     }
     const marks = new Map<string, number>();
     for (const position of positions || []) marks.set(symbolKey(position.symbol), Number(position.current_price));
-    const state = new Map<string, any>(), globalLots = new Map<string, any[]>();
+    const state = new Map<string, any>(), globalLots = new Map<string, any[]>(), realizedClosures = new Map<string, any>(), botNames = new Map((bots || []).map((bot:any)=>[bot.id,bot.name]));
     for (const bot of bots || []) state.set(bot.id, { bot_id: bot.id, fill_count: 0, realized_pnl: 0, unrealized_pnl: 0, total_pnl: 0, open_cost: 0, closed_quantity: 0, mark_to_market_complete: true, first_fill_at: null, last_fill_at: null });
     let unattributed = 0;
     for (const fill of fills) {
@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
         if (matchIndex < 0) break;
         const lot = lots[matchIndex], matched = Math.min(Math.abs(remaining), Math.abs(lot.qty));
         const performance = state.get(lot.bot_id);
-        if (performance) { performance.realized_pnl += lot.qty > 0 ? (price - lot.price) * matched : (lot.price - price) * matched; performance.closed_quantity += matched; performance.first_fill_at ||= fill.transaction_time; performance.last_fill_at = fill.transaction_time; touched.add(lot.bot_id); }
+        if (performance) { const realized=lot.qty > 0 ? (price - lot.price) * matched : (lot.price - price) * matched,key=`${lot.bot_id}:${fill.order_id||fill.id}`,closure=realizedClosures.get(key)||{bot_id:lot.bot_id,bot_name:botNames.get(lot.bot_id)||"Bot",broker_order_id:fill.order_id||null,symbols:new Set<string>(),quantity:0,entry_value:0,exit_value:0,realized_pnl:0,closed_at:fill.transaction_time};performance.realized_pnl+=realized;performance.closed_quantity+=matched;performance.first_fill_at||=fill.transaction_time;performance.last_fill_at=fill.transaction_time;touched.add(lot.bot_id);closure.symbols.add(symbol);closure.quantity+=matched;closure.entry_value+=lot.price*matched;closure.exit_value+=price*matched;closure.realized_pnl+=realized;if(fill.transaction_time>closure.closed_at)closure.closed_at=fill.transaction_time;realizedClosures.set(key,closure); }
         lot.qty += Math.sign(remaining) * matched; remaining -= Math.sign(remaining) * matched;
         if (Math.abs(lot.qty) < 1e-10) lots.splice(matchIndex, 1);
       }
@@ -116,7 +116,8 @@ Deno.serve(async (req) => {
     if (unattributed > 0) { activeKeys.push("fills:unattributed"); issueRows.push({ user_id: user.id, issue_key: "fills:unattributed", symbol: null, asset_class: null, classification: "unattributed_fill", severity: "error", status: "open", details: { count: unattributed }, last_seen_at: now, resolved_at: null }); }
     if (issueRows.length) await admin.from("bg_reconciliation_issues").upsert(issueRows, { onConflict: "user_id,issue_key" });
     let resolvedQuery = admin.from("bg_reconciliation_issues").update({ status: "resolved", resolved_at: now }).eq("user_id", user.id).eq("status", "open"); if (activeKeys.length) resolvedQuery = resolvedQuery.not("issue_key", "in", `(${activeKeys.map((key) => `"${key}"`).join(",")})`); await resolvedQuery;
-    return json({ connected: true, bots: [...state.values()], position_attribution: positionAttribution, unattributed_fill_count: unattributed, activity_count: fills.length, truncated, as_of: new Date().toISOString() });
+    const recentRealized=[...realizedClosures.values()].map((closure:any)=>({bot_id:closure.bot_id,bot_name:closure.bot_name,broker_order_id:closure.broker_order_id,symbols:[...closure.symbols],quantity:closure.quantity,average_entry:closure.quantity?closure.entry_value/closure.quantity:null,average_exit:closure.quantity?closure.exit_value/closure.quantity:null,realized_pnl:closure.realized_pnl,closed_at:closure.closed_at})).sort((a:any,b:any)=>new Date(b.closed_at).valueOf()-new Date(a.closed_at).valueOf()).slice(0,50);
+    return json({ connected: true, bots: [...state.values()], recent_realized:recentRealized, position_attribution: positionAttribution, unattributed_fill_count: unattributed, activity_count: fills.length, truncated, as_of: new Date().toISOString() });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Unable to calculate bot performance" }, 500);
   }
