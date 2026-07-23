@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundedEntryNotional, calculateBotPosition, cooldownRemainingMs, optionMatchesUnderlying, optionUnderlying, staleOrderDeadline } from "../supabase/functions/_shared/position-ledger.js";
+import { boundedEntryNotional, calculateBotPosition, cooldownRemainingMs, optionMatchesUnderlying, optionUnderlying, portfolioEntryAssessment, staleOrderDeadline } from "../supabase/functions/_shared/position-ledger.js";
 
 test("calculates a weighted long cost basis after a partial exit", () => {
   const result = calculateBotPosition([
@@ -69,4 +69,18 @@ test("entry sizing never exceeds the bot allocation", () => {
   assert.equal(boundedEntryNotional(100, 500, 475), 25);
   assert.equal(boundedEntryNotional(100, 500, 510), 0);
   assert.equal(boundedEntryNotional(100, 500, 200), 100);
+});
+
+test("portfolio entry gate reserves pending orders and enforces concentration", () => {
+  const result = portfolioEntryAssessment({ equity: 10000, lastEquity: 10000, symbol: "SPY", plannedExposure: 500, positions: [{ symbol: "QQQ", market_value: 5000 }, { symbol: "SPY", market_value: 1700 }], openOrders: [{ notional: 400 }] });
+  assert.equal(result.allowed, false);
+  assert.equal(result.reason, "gross_exposure_limit");
+  assert.equal(result.pending_reservation, 400);
+  assert.equal(result.projected_gross_pct, 76);
+});
+
+test("portfolio entry gate stops entries after the daily loss limit", () => {
+  const result = portfolioEntryAssessment({ equity: 9600, lastEquity: 10000, symbol: "AAPL", plannedExposure: 100, positions: [] });
+  assert.equal(result.allowed, false);
+  assert.equal(result.reason, "daily_loss_limit");
 });
