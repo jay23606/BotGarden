@@ -1,9 +1,9 @@
 const finite = (value) => value != null && Number.isFinite(Number(value));
 
 export function pruneEvidenceRequirements(assetClass) {
-  if (assetClass === "option") return { minimumDays: 30, minimumRuns: 3 };
-  if (assetClass === "crypto") return { minimumDays: 30, minimumRuns: 3 };
-  return { minimumDays: 20, minimumRuns: 2 };
+  if (assetClass === "option") return { minimumDays: 30, minimumRuns: 1 };
+  if (assetClass === "crypto") return { minimumDays: 30, minimumRuns: 1 };
+  return { minimumDays: 20, minimumRuns: 1 };
 }
 
 export function assessPruneEvidence({

@@ -23,6 +23,17 @@ test("small positive return is not rejected for missing an arbitrary two percent
   assert.equal(result.state, "retained");
 });
 
+test("one complete 30-day crypto replay can support a prune decision", () => {
+  const result = assessPruneEvidence({
+    assetClass: "crypto", result: -2, benchmarkReturn: 1,
+    coverageDays: 30, evaluatedRuns: 1, positiveRuns: 0,
+    validationAverage: -1, validationRuns: 1, maxDrawdown: 5,
+  });
+  assert.equal(result.matureHistory, true);
+  assert.equal(result.eligible, true);
+  assert.match(result.reasons.join(" "), /underperformed buy-and-hold/);
+});
+
 test("mature repeated losses qualify for pruning", () => {
   const result = assessPruneEvidence({
     assetClass: "crypto", result: -4, benchmarkReturn: 2,
@@ -42,8 +53,8 @@ test("material observed paper loss can prune without mature replay history", () 
   assert.match(result.reasons[0], /paper performance/);
 });
 
-test("options and crypto require more evidence than stocks", () => {
+test("options and crypto require longer replay coverage than stocks", () => {
   assert.equal(pruneEvidenceRequirements("equity").minimumDays, 20);
   assert.equal(pruneEvidenceRequirements("option").minimumDays, 30);
-  assert.equal(pruneEvidenceRequirements("crypto").minimumRuns, 3);
+  assert.equal(pruneEvidenceRequirements("crypto").minimumRuns, 1);
 });
