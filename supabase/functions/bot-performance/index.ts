@@ -30,18 +30,18 @@ Deno.serve(async (req) => {
 
     const [{ data: bots }, { data: orders }, { data: trades }, { data: runs }, { data: events }, positions] = await Promise.all([
       admin.from("bg_bots").select("id,name,symbol,asset_class,max_allocation").eq("user_id", user.id),
-      admin.from("bg_orders").select("broker_order_id,bot_id,trade_id").eq("user_id", user.id).not("broker_order_id", "is", null).limit(10000),
+      admin.from("bg_orders").select("broker_order_id,client_order_id,bot_id,trade_id").eq("user_id", user.id).not("broker_order_id", "is", null).limit(10000),
       admin.from("bg_trades").select("id,run_id").eq("user_id", user.id).limit(10000),
       admin.from("bg_bot_runs").select("id,bot_id").eq("user_id", user.id).limit(10000),
-      admin.from("bg_bot_events").select("bot_id,details").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10000),
+      admin.from("bg_bot_events").select("bot_id,event_type,message,details,created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10000),
       alpaca("https://paper-api.alpaca.markets/v2/positions", apiKey, secret),
     ]);
     const botIds = new Set((bots || []).map((bot: any) => bot.id));
     const runBot = new Map((runs || []).map((run: any) => [run.id, run.bot_id]));
     const tradeBot = new Map((trades || []).map((trade: any) => [trade.id, runBot.get(trade.run_id)]));
-    const orderBot = new Map<string, string>();
+    const orderBot = new Map<string, string>(), orderMetadata = new Map((orders || []).map((order:any)=>[order.broker_order_id,order])), exitEvents = new Map<string, any>();
     for (const order of orders || []) { const botId = order.bot_id || tradeBot.get(order.trade_id); if (botId && botIds.has(botId)) orderBot.set(order.broker_order_id, botId); }
-    for (const event of events || []) { const orderId = event.details?.broker_order_id; if (orderId && botIds.has(event.bot_id) && !orderBot.has(orderId)) orderBot.set(orderId, event.bot_id); }
+    for (const event of events || []) { const orderId = event.details?.broker_order_id; if (orderId && botIds.has(event.bot_id) && !orderBot.has(orderId)) orderBot.set(orderId, event.bot_id); if(orderId&&event.event_type==="paper_exit_submitted"&&!exitEvents.has(orderId))exitEvents.set(orderId,event); }
 
     let fills: any[] = [];
     let pageToken = "", truncated = false;
@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
         if (matchIndex < 0) break;
         const lot = lots[matchIndex], matched = Math.min(Math.abs(remaining), Math.abs(lot.qty));
         const performance = state.get(lot.bot_id);
-        if (performance) { const realized=lot.qty > 0 ? (price - lot.price) * matched : (lot.price - price) * matched,key=`${lot.bot_id}:${fill.order_id||fill.id}`,closure=realizedClosures.get(key)||{bot_id:lot.bot_id,bot_name:botNames.get(lot.bot_id)||"Bot",broker_order_id:fill.order_id||null,symbols:new Set<string>(),quantity:0,entry_value:0,exit_value:0,realized_pnl:0,closed_at:fill.transaction_time};performance.realized_pnl+=realized;performance.closed_quantity+=matched;performance.first_fill_at||=fill.transaction_time;performance.last_fill_at=fill.transaction_time;touched.add(lot.bot_id);closure.symbols.add(symbol);closure.quantity+=matched;closure.entry_value+=lot.price*matched;closure.exit_value+=price*matched;closure.realized_pnl+=realized;if(fill.transaction_time>closure.closed_at)closure.closed_at=fill.transaction_time;realizedClosures.set(key,closure); }
+        if (performance) { const realized=lot.qty > 0 ? (price - lot.price) * matched : (lot.price - price) * matched,key=`${lot.bot_id}:${fill.order_id||fill.id}`,event=exitEvents.get(fill.order_id),clientId=String(orderMetadata.get(fill.order_id)?.client_order_id||""),fallbackReason=clientId.startsWith("bgrt-")?"retirement_exit":clientId.startsWith("bgrx-")?"crypto_risk_exit":clientId.startsWith("bgsx-")?"stock_risk_exit":clientId.startsWith("bgx-")?"option_exit":"closing_fill",overlapCount=new Set(lots.filter((candidate:any)=>Math.abs(Number(candidate.qty||0))>=1e-10).map((candidate:any)=>candidate.bot_id)).size,closure=realizedClosures.get(key)||{bot_id:lot.bot_id,bot_name:botNames.get(lot.bot_id)||"Bot",broker_order_id:fill.order_id||null,symbols:new Set<string>(),quantity:0,entry_value:0,exit_value:0,realized_pnl:0,return_pct:null,exit_reason:event?.details?.reason||fallbackReason,exit_message:event?.message||null,concurrent_bot_count:overlapCount,closed_at:fill.transaction_time};performance.realized_pnl+=realized;performance.closed_quantity+=matched;performance.first_fill_at||=fill.transaction_time;performance.last_fill_at=fill.transaction_time;touched.add(lot.bot_id);closure.symbols.add(symbol);closure.quantity+=matched;closure.entry_value+=lot.price*matched;closure.exit_value+=price*matched;closure.realized_pnl+=realized;closure.concurrent_bot_count=Math.max(closure.concurrent_bot_count,overlapCount);if(fill.transaction_time>closure.closed_at)closure.closed_at=fill.transaction_time;realizedClosures.set(key,closure); }
         lot.qty += Math.sign(remaining) * matched; remaining -= Math.sign(remaining) * matched;
         if (Math.abs(lot.qty) < 1e-10) lots.splice(matchIndex, 1);
       }
@@ -116,7 +116,7 @@ Deno.serve(async (req) => {
     if (unattributed > 0) { activeKeys.push("fills:unattributed"); issueRows.push({ user_id: user.id, issue_key: "fills:unattributed", symbol: null, asset_class: null, classification: "unattributed_fill", severity: "error", status: "open", details: { count: unattributed }, last_seen_at: now, resolved_at: null }); }
     if (issueRows.length) await admin.from("bg_reconciliation_issues").upsert(issueRows, { onConflict: "user_id,issue_key" });
     let resolvedQuery = admin.from("bg_reconciliation_issues").update({ status: "resolved", resolved_at: now }).eq("user_id", user.id).eq("status", "open"); if (activeKeys.length) resolvedQuery = resolvedQuery.not("issue_key", "in", `(${activeKeys.map((key) => `"${key}"`).join(",")})`); await resolvedQuery;
-    const recentRealized=[...realizedClosures.values()].map((closure:any)=>({bot_id:closure.bot_id,bot_name:closure.bot_name,broker_order_id:closure.broker_order_id,symbols:[...closure.symbols],quantity:closure.quantity,average_entry:closure.quantity?closure.entry_value/closure.quantity:null,average_exit:closure.quantity?closure.exit_value/closure.quantity:null,realized_pnl:closure.realized_pnl,closed_at:closure.closed_at})).sort((a:any,b:any)=>new Date(b.closed_at).valueOf()-new Date(a.closed_at).valueOf()).slice(0,50);
+    const recentRealized=[...realizedClosures.values()].map((closure:any)=>({bot_id:closure.bot_id,bot_name:closure.bot_name,broker_order_id:closure.broker_order_id,symbols:[...closure.symbols],quantity:closure.quantity,average_entry:closure.quantity?closure.entry_value/closure.quantity:null,average_exit:closure.quantity?closure.exit_value/closure.quantity:null,realized_pnl:closure.realized_pnl,return_pct:closure.entry_value?closure.realized_pnl/closure.entry_value*100:null,exit_reason:closure.exit_reason,exit_message:closure.exit_message,concurrent_bot_count:closure.concurrent_bot_count,closed_at:closure.closed_at})).sort((a:any,b:any)=>new Date(b.closed_at).valueOf()-new Date(a.closed_at).valueOf()).slice(0,50);
     return json({ connected: true, bots: [...state.values()], recent_realized:recentRealized, position_attribution: positionAttribution, unattributed_fill_count: unattributed, activity_count: fills.length, truncated, as_of: new Date().toISOString() });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Unable to calculate bot performance" }, 500);
