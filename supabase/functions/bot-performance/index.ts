@@ -22,7 +22,7 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: "Invalid session" }, 401);
     const { data: connection } = await admin.from("bg_broker_connections").select("id").eq("user_id", user.id).eq("broker", "alpaca").eq("environment", "paper").eq("status", "connected").maybeSingle();
     if (!connection) return json({ connected: false, bots: [], recent_realized: [], unattributed_fill_count: 0 });
-    const { data: credentials } = await admin.from("bg_broker_credentials").select("*").eq("connection_id", connection.id).single();
+    const { data: credentials } = await admin.from("bg_broker_credentials").select("api_key_ciphertext,api_key_iv,api_secret_ciphertext,api_secret_iv").eq("connection_id", connection.id).single();
     const raw = b64(Deno.env.get("BG_CREDENTIALS_KEY") || "");
     if (raw.length !== 32) throw new Error("Credential encryption is not configured");
     const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
       admin.from("bg_orders").select("broker_order_id,client_order_id,bot_id,trade_id").eq("user_id", user.id).not("broker_order_id", "is", null).limit(10000),
       admin.from("bg_trades").select("id,run_id").eq("user_id", user.id).limit(10000),
       admin.from("bg_bot_runs").select("id,bot_id").eq("user_id", user.id).limit(10000),
-      admin.from("bg_bot_events").select("bot_id,event_type,message,details,created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10000),
+      admin.from("bg_bot_events").select("bot_id,event_type,message,details,created_at").eq("user_id", user.id).in("event_type", ["paper_order_submitted", "paper_exit_submitted"]).order("created_at", { ascending: false }).limit(2000),
       alpaca("https://paper-api.alpaca.markets/v2/positions", apiKey, secret),
     ]);
     const botIds = new Set((bots || []).map((bot: any) => bot.id));

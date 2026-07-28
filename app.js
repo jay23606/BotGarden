@@ -177,7 +177,7 @@ async function loadDashboard() {
   const [{ data: botData }, connection, { data: backtests }, portfolio, observedPerformance, operational, { data: statuses }] = await Promise.all([
     supabase.from("bg_bots").select("id,name,bot_type,status,asset_class,symbol,direction,max_allocation,max_active_trades,start_condition,take_profit_pct,stop_loss_pct,cooldown_seconds,session_policy,created_at").order("created_at", { ascending: false }),
     getConnection(),
-    supabase.from("bg_backtests").select("bot_id,status,duration_seconds,initial_capital,net_pnl,return_pct,max_drawdown_pct,trade_count,win_count,loss_count,signal_count,estimated_pnl,estimated_return_pct,market_return_pct,daily_regimes,walk_forward,execution_model_version,start_at,end_at,created_at").in("status", ["completed", "signal_only"]).gte("execution_model_version",2),
+    supabase.from("bg_backtests").select("bot_id,status,duration_seconds,initial_capital,net_pnl,return_pct,max_drawdown_pct,trade_count,win_count,loss_count,signal_count,estimated_pnl,estimated_return_pct,market_return_pct,daily_regimes,walk_forward,execution_model_version,start_at,end_at,created_at").in("status", ["completed", "signal_only"]).gte("execution_model_version",2).order("created_at", { ascending: false }).limit(1000),
     invoke("portfolio-snapshot", {}).catch((error) => ({ connected: false, account: null, positions: [], error: error.message })),
     invoke("bot-performance", {}).catch((error) => ({ bots: [], error: error.message })),
     invoke("operations-control", { action: "status" }).catch((error) => ({ health: [], error: error.message })),
