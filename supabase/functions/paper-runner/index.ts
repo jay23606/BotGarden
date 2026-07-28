@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { boundedEntryNotional, calculateBotPosition, cooldownRemainingMs, normalizeSymbol, optionMatchesUnderlying, portfolioEntryAssessment, staleOrderDeadline } from "../_shared/position-ledger.js";
+import { boundedEntryNotional, brokerItemMatchesUnderlying, calculateBotPosition, cooldownRemainingMs, normalizeSymbol, optionMatchesUnderlying, portfolioEntryAssessment, staleOrderDeadline } from "../_shared/position-ledger.js";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const fromB64 = (value: string) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
@@ -199,10 +199,13 @@ Deno.serve(async (request) => {
       if (exitOnly) {
         if (!broker.positions) [broker.positions, broker.openOrders] = await Promise.all([alpaca("https://paper-api.alpaca.markets/v2/positions", apiKey, apiSecret), alpaca("https://paper-api.alpaca.markets/v2/orders?status=open&nested=true&limit=500", apiKey, apiSecret)]);
         const positions = broker.positions, openOrders = broker.openOrders;
-        summary.staleOrdersCanceled += await cancelStaleBotOrders(bot, openOrders, apiKey, apiSecret, admin);
-        const position = bot.asset_class === "option" ? null : positions.find((item: any) => item.symbol === bot.symbol || item.symbol === bot.symbol.replace("/", ""));
-        const ownsExposure = await botOwnedExposure(bot, admin);
-        const pendingForSymbol = await botHasPendingOrder(bot, openOrders, admin);
+        const relevantPositions = positions.filter((item: any) => brokerItemMatchesUnderlying(item, bot.symbol, bot.asset_class));
+        const relevantOrders = openOrders.filter((item: any) => brokerItemMatchesUnderlying(item, bot.symbol, bot.asset_class));
+        if (!relevantPositions.length && !relevantOrders.length && bot.status !== "stopped") { summary.skipped++; continue; }
+        summary.staleOrdersCanceled += await cancelStaleBotOrders(bot, relevantOrders, apiKey, apiSecret, admin);
+        const position = bot.asset_class === "option" ? null : relevantPositions[0];
+        const ownsExposure = relevantPositions.length ? await botOwnedExposure(bot, admin) : bot.status === "stopped" ? await botOwnedExposure(bot, admin) : false;
+        const pendingForSymbol = relevantOrders.length ? await botHasPendingOrder(bot, relevantOrders, admin) : false;
         if (bot.status === "stopped" && !ownsExposure && !pendingForSymbol) { await admin.from("bg_bots").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", bot.id); await setStatus("retirement_complete", "Bot archived after its attributed broker exposure and orders became flat"); summary.skipped++; continue; }
         if (bot.asset_class !== "option" && !position) { summary.skipped++; continue; }
         if (pendingForSymbol) { await setStatus("exit_order_pending", "Risk monitor found an open order; waiting before another exit", { monitored_every_seconds: 60 }); summary.skipped++; continue; }

@@ -7,6 +7,12 @@ export function optionUnderlying(symbol) {
 
 export const optionMatchesUnderlying = (optionSymbol, underlying) => optionUnderlying(optionSymbol) === normalizeSymbol(underlying);
 
+export function brokerItemMatchesUnderlying(item, underlying, assetClass) {
+  const target = normalizeSymbol(underlying);
+  const symbols = [item?.symbol, ...(item?.legs || []).map((leg) => leg?.symbol)].filter(Boolean);
+  return symbols.some((symbol) => normalizeSymbol(symbol) === target || (assetClass === "option" && optionMatchesUnderlying(symbol, target)));
+}
+
 export function cooldownRemainingMs(lastExitFillAt, cooldownSeconds, now = Date.now()) {
   if (!lastExitFillAt || Number(cooldownSeconds) <= 0) return 0;
   return Math.max(0, Number(cooldownSeconds) * 1000 - (Number(now) - new Date(lastExitFillAt).valueOf()));

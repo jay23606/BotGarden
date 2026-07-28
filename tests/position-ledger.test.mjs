@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundedEntryNotional, calculateBotPosition, cooldownRemainingMs, optionMatchesUnderlying, optionUnderlying, portfolioEntryAssessment, staleOrderDeadline } from "../supabase/functions/_shared/position-ledger.js";
+import { boundedEntryNotional, brokerItemMatchesUnderlying, calculateBotPosition, cooldownRemainingMs, optionMatchesUnderlying, optionUnderlying, portfolioEntryAssessment, staleOrderDeadline } from "../supabase/functions/_shared/position-ledger.js";
 
 test("calculates a weighted long cost basis after a partial exit", () => {
   const result = calculateBotPosition([
@@ -57,6 +57,13 @@ test("option ownership uses the complete OCC underlying instead of a ticker pref
   assert.equal(optionUnderlying("LTC260821C00100000"), "LTC");
   assert.equal(optionMatchesUnderlying("SPY260821P00500000", "SPY"), true);
   assert.equal(optionMatchesUnderlying("SPYG260821P00090000", "SPY"), false);
+});
+
+test("broker exposure matching skips unrelated idle bots and finds option legs", () => {
+  assert.equal(brokerItemMatchesUnderlying({ symbol: "BTCUSD" }, "BTC/USD", "crypto"), true);
+  assert.equal(brokerItemMatchesUnderlying({ symbol: "AAPL" }, "MSFT", "equity"), false);
+  assert.equal(brokerItemMatchesUnderlying({ legs: [{ symbol: "SPY260821P00500000" }] }, "SPY", "option"), true);
+  assert.equal(brokerItemMatchesUnderlying({ legs: [{ symbol: "SPYG260821P00090000" }] }, "SPY", "option"), false);
 });
 
 test("cooldown starts at the actual exit fill", () => {
